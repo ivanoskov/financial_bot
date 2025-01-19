@@ -112,6 +112,10 @@ func (s *ExpenseTracker) CreateCategory(ctx context.Context, category *model.Cat
 	return s.repo.CreateCategory(ctx, category)
 }
 
+func (s *ExpenseTracker) DeleteCategory(ctx context.Context, categoryID string, userID int64) error {
+	return s.repo.DeleteCategory(ctx, categoryID, userID)
+}
+
 type Report struct {
 	TotalExpenses float64
 	TotalIncome   float64

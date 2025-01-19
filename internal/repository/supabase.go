@@ -33,6 +33,16 @@ func (r *SupabaseRepository) CreateCategory(ctx context.Context, category *model
 		return fmt.Errorf("failed to create category: %w", err)
 	}
 	fmt.Printf("Category created successfully. Response data: %s, count: %d\n", string(data), count)
+
+	// Парсим ответ для получения ID
+	var createdCategories []model.Category
+	if err := json.Unmarshal(data, &createdCategories); err != nil {
+		return fmt.Errorf("failed to parse created category: %w", err)
+	}
+	if len(createdCategories) > 0 {
+		category.ID = createdCategories[0].ID
+		category.CreatedAt = createdCategories[0].CreatedAt
+	}
 	return nil
 }
 

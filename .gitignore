@@ -5,6 +5,7 @@
 /*.dll
 /*.so
 /*.dylib
+main
 
 # Go-модули
 go.sum
