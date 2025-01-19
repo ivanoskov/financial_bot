@@ -3,7 +3,7 @@
 Проект демонстрирует практическое применение чистой архитектуры, работу с Telegram Bot API и визуализацию данных. Разработан с целью тестирования использования Golang в serverless архитектуре.
 
 <div align="center">
-<img src="docs/screencast.gif" alt="screencast" style="width: 40%; height: auto; border-radius: 10px;">
+<img src="docs/screencast.gif" alt="screencast" style="width: 50wh;">
 </div>
 
 ## Режимы работы
