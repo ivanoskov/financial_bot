@@ -64,12 +64,23 @@ func (r *SupabaseRepository) GetCategories(ctx context.Context, userID int64) ([
 }
 
 func (r *SupabaseRepository) CreateTransaction(ctx context.Context, transaction *model.Transaction) error {
+	fmt.Printf("Creating transaction: %+v\n", transaction)
 	data, count, err := r.client.From("transactions").Insert(transaction, true, "", "", "").Execute()
 	if err != nil {
-		return err
+		fmt.Printf("Error creating transaction: %v\n", err)
+		return fmt.Errorf("failed to create transaction: %w", err)
 	}
-	_ = data
-	_ = count
+	fmt.Printf("Transaction created successfully. Response data: %s, count: %d\n", string(data), count)
+
+	// Парсим ответ для получения ID
+	var createdTransactions []model.Transaction
+	if err := json.Unmarshal(data, &createdTransactions); err != nil {
+		return fmt.Errorf("failed to parse created transaction: %w", err)
+	}
+	if len(createdTransactions) > 0 {
+		transaction.ID = createdTransactions[0].ID
+		transaction.CreatedAt = createdTransactions[0].CreatedAt
+	}
 	return nil
 }
 
@@ -86,14 +97,22 @@ func (r *SupabaseRepository) GetTransactions(ctx context.Context, userID int64, 
 		query = query.Lte("date", filter.EndDate.Format(time.RFC3339))
 	}
 
+	// Добавляем сортировку по дате (сначала новые)
+	query = query.Order("date.desc", nil)
+
+	// Если указан лимит, добавляем его
+	if filter.Limit > 0 {
+		query = query.Limit(filter.Limit, "")
+	}
+
 	data, count, err := query.Execute()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get transactions: %w", err)
 	}
-	_ = count
+	fmt.Printf("Got %d transactions\n", count)
 
 	if err := json.Unmarshal(data, &transactions); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse transactions: %w", err)
 	}
 	return transactions, nil
 }

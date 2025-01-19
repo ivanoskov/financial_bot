@@ -15,9 +15,13 @@ func (b *Bot) getMainKeyboard() tgbotapi.InlineKeyboardMarkup {
 			tgbotapi.NewInlineKeyboardButtonData("📊 Отчёты", "action_report"),
 			tgbotapi.NewInlineKeyboardButtonData("📋 Категории", "action_categories"),
 		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🗑 История транзакций", "action_transactions"),
+		),
 	)
 }
 
+// Клавиатура для управления категориями (с кнопками удаления)
 func (b *Bot) getCategoriesKeyboard(categories []model.Category) tgbotapi.InlineKeyboardMarkup {
 	var buttons [][]tgbotapi.InlineKeyboardButton
 	
@@ -51,4 +55,34 @@ func (b *Bot) getCategoriesKeyboard(categories []model.Category) tgbotapi.Inline
 	})
 	
 	return tgbotapi.NewInlineKeyboardMarkup(buttons...)
-} 
+}
+
+// Клавиатура для выбора категории при добавлении транзакции (без кнопок удаления)
+func (b *Bot) getSelectCategoryKeyboard(categories []model.Category) tgbotapi.InlineKeyboardMarkup {
+	var buttons [][]tgbotapi.InlineKeyboardButton
+	
+	for _, category := range categories {
+		emoji := "💸"
+		if category.Type == "income" {
+			emoji = "💰"
+		}
+		buttons = append(buttons, []tgbotapi.InlineKeyboardButton{
+			tgbotapi.NewInlineKeyboardButtonData(
+				emoji + " " + category.Name,
+				"category_" + category.ID,
+			),
+		})
+	}
+
+	// Добавляем кнопки управления
+	buttons = append(buttons, []tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardButtonData("⚙️ Управление категориями", "action_categories"),
+	})
+
+	// Добавляем кнопку "Назад"
+	buttons = append(buttons, []tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardButtonData("« Назад", "action_back"),
+	})
+	
+	return tgbotapi.NewInlineKeyboardMarkup(buttons...)
+}

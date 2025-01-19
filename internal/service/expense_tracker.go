@@ -116,6 +116,17 @@ func (s *ExpenseTracker) DeleteCategory(ctx context.Context, categoryID string, 
 	return s.repo.DeleteCategory(ctx, categoryID, userID)
 }
 
+func (s *ExpenseTracker) GetRecentTransactions(ctx context.Context, userID int64, limit int) ([]model.Transaction, error) {
+	filter := repository.TransactionFilter{
+		Limit: limit,
+	}
+	return s.repo.GetTransactions(ctx, userID, filter)
+}
+
+func (s *ExpenseTracker) DeleteTransaction(ctx context.Context, transactionID string, userID int64) error {
+	return s.repo.DeleteTransaction(ctx, transactionID, userID)
+}
+
 type Report struct {
 	TotalExpenses float64
 	TotalIncome   float64

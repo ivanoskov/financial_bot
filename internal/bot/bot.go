@@ -159,6 +159,11 @@ func (b *Bot) handleCallback(callback *tgbotapi.CallbackQuery) error {
 			From: callback.From,
 			Chat: callback.Message.Chat,
 		})
+	case callback.Data == "action_transactions":
+		b.handleTransactions(&tgbotapi.Message{
+			From: callback.From,
+			Chat: callback.Message.Chat,
+		})
 	case callback.Data == "add_income_category":
 		b.handleAddIncomeCategory(&tgbotapi.Message{
 			From: callback.From,
@@ -174,6 +179,17 @@ func (b *Bot) handleCallback(callback *tgbotapi.CallbackQuery) error {
 		msg.ParseMode = "Markdown"
 		msg.ReplyMarkup = b.getMainKeyboard()
 		b.api.Send(msg)
+	case strings.HasPrefix(callback.Data, "delete_transaction_"):
+		transactionID := strings.TrimPrefix(callback.Data, "delete_transaction_")
+		err := b.service.DeleteTransaction(context.Background(), transactionID, callback.From.ID)
+		if err != nil {
+			return fmt.Errorf("error deleting transaction: %w", err)
+		}
+		// Обновляем список транзакций
+		b.handleTransactions(&tgbotapi.Message{
+			From: callback.From,
+			Chat: callback.Message.Chat,
+		})
 	case strings.HasPrefix(callback.Data, "delete_category_"):
 		categoryID := strings.TrimPrefix(callback.Data, "delete_category_")
 		err := b.service.DeleteCategory(context.Background(), categoryID, callback.From.ID)
@@ -402,7 +418,7 @@ func (b *Bot) handleCategories(message *tgbotapi.Message) {
 func (b *Bot) handleAddExpense(message *tgbotapi.Message) {
 	categories, err := b.service.GetCategories(context.Background(), message.From.ID)
 	if err != nil {
-		b.sendErrorMessage(message.Chat.ID, "Ошибка при получении категорий")
+		b.sendErrorMessage(message.Chat.ID, "Не удалось загрузить категории")
 		return
 	}
 
@@ -415,19 +431,24 @@ func (b *Bot) handleAddExpense(message *tgbotapi.Message) {
 	}
 
 	if len(expenseCategories) == 0 {
-		b.sendErrorMessage(message.Chat.ID, "У вас нет категорий расходов. Сначала добавьте их через /categories")
+		msg := tgbotapi.NewMessage(message.Chat.ID, 
+			"*У вас нет категорий расходов*\n\nСначала создайте хотя бы одну категорию:")
+		msg.ParseMode = "Markdown"
+		msg.ReplyMarkup = b.getCategoriesKeyboard(categories)
+		b.api.Send(msg)
 		return
 	}
 
-	msg := tgbotapi.NewMessage(message.Chat.ID, "Выберите категорию расхода:")
-	msg.ReplyMarkup = b.getCategoriesKeyboard(expenseCategories)
+	msg := tgbotapi.NewMessage(message.Chat.ID, "*Добавление расхода*\n\nВыберите категорию:")
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = b.getSelectCategoryKeyboard(expenseCategories)
 	b.api.Send(msg)
 }
 
 func (b *Bot) handleAddIncome(message *tgbotapi.Message) {
 	categories, err := b.service.GetCategories(context.Background(), message.From.ID)
 	if err != nil {
-		b.sendErrorMessage(message.Chat.ID, "Ошибка при получении категорий")
+		b.sendErrorMessage(message.Chat.ID, "Не удалось загрузить категории")
 		return
 	}
 
@@ -440,12 +461,17 @@ func (b *Bot) handleAddIncome(message *tgbotapi.Message) {
 	}
 
 	if len(incomeCategories) == 0 {
-		b.sendErrorMessage(message.Chat.ID, "У вас нет категорий доходов. Сначала добавьте их через /categories")
+		msg := tgbotapi.NewMessage(message.Chat.ID, 
+			"*У вас нет категорий доходов*\n\nСначала создайте хотя бы одну категорию:")
+		msg.ParseMode = "Markdown"
+		msg.ReplyMarkup = b.getCategoriesKeyboard(categories)
+		b.api.Send(msg)
 		return
 	}
 
-	msg := tgbotapi.NewMessage(message.Chat.ID, "Выберите категорию дохода:")
-	msg.ReplyMarkup = b.getCategoriesKeyboard(incomeCategories)
+	msg := tgbotapi.NewMessage(message.Chat.ID, "*Добавление дохода*\n\nВыберите категорию:")
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = b.getSelectCategoryKeyboard(incomeCategories)
 	b.api.Send(msg)
 }
 
@@ -467,6 +493,68 @@ func (b *Bot) handleAddExpenseCategory(message *tgbotapi.Message) {
 	}
 	msg := tgbotapi.NewMessage(message.Chat.ID, "*Новая категория расхода*\n\nВведите название:")
 	msg.ParseMode = "Markdown"
+	b.api.Send(msg)
+}
+
+func (b *Bot) handleTransactions(message *tgbotapi.Message) {
+	// Получаем последние 10 транзакций
+	transactions, err := b.service.GetRecentTransactions(context.Background(), message.From.ID, 10)
+	if err != nil {
+		b.sendErrorMessage(message.Chat.ID, "Не удалось загрузить транзакции")
+		return
+	}
+
+	if len(transactions) == 0 {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "*История транзакций*\n\nУ вас пока нет транзакций")
+		msg.ParseMode = "Markdown"
+		msg.ReplyMarkup = b.getMainKeyboard()
+		b.api.Send(msg)
+		return
+	}
+
+	// Получаем категории для отображения их названий
+	categories, err := b.service.GetCategories(context.Background(), message.From.ID)
+	if err != nil {
+		b.sendErrorMessage(message.Chat.ID, "Не удалось загрузить категории")
+		return
+	}
+
+	categoryNames := make(map[string]string)
+	for _, cat := range categories {
+		categoryNames[cat.ID] = cat.Name
+	}
+
+	text := "*Последние транзакции*\nНажмите на транзакцию для её удаления\n\n"
+	var buttons [][]tgbotapi.InlineKeyboardButton
+
+	for _, t := range transactions {
+		categoryName := categoryNames[t.CategoryID]
+		emoji := "💸"
+		amountStr := fmt.Sprintf("%.2f₽", -t.Amount)
+		if t.Amount > 0 {
+			emoji = "💰"
+			amountStr = fmt.Sprintf("%.2f₽", t.Amount)
+		}
+
+		text += fmt.Sprintf("%s *%s*: %s _%s_\n", 
+			emoji, categoryName, amountStr, t.Description)
+
+		buttons = append(buttons, []tgbotapi.InlineKeyboardButton{
+			tgbotapi.NewInlineKeyboardButtonData(
+				fmt.Sprintf("%s %s: %s", emoji, categoryName, amountStr),
+				"delete_transaction_"+t.ID,
+			),
+		})
+	}
+
+	// Добавляем кнопку "Назад"
+	buttons = append(buttons, []tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardButtonData("« Назад", "action_back"),
+	})
+
+	msg := tgbotapi.NewMessage(message.Chat.ID, text)
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(buttons...)
 	b.api.Send(msg)
 }
 

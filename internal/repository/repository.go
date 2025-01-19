@@ -24,4 +24,5 @@ type TransactionFilter struct {
 	StartDate *time.Time
 	EndDate   *time.Time
 	Type      string // "expense" или "income"
+	Limit     int    // ограничение количества результатов
 } 
