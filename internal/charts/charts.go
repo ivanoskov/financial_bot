@@ -3,9 +3,12 @@ package charts
 import (
 	"bytes"
 	"fmt"
+	"log"
+	"math"
 	"time"
-	"github.com/wcharczuk/go-chart/v2"
+
 	"github.com/ivanoskov/financial_bot/internal/service"
+	"github.com/wcharczuk/go-chart/v2"
 )
 
 // ChartGenerator генерирует различные типы графиков
@@ -51,15 +54,17 @@ func (g *ChartGenerator) GenerateFinancialDashboard(report *service.BaseReport) 
 	expenseValues := make([]float64, len(report.Trends.ExpenseTrend))
 	incomeValues := make([]float64, len(report.Trends.IncomeTrend))
 	balanceValues := make([]float64, len(report.Trends.ExpenseTrend))
-	
+
 	// Рассчитываем накопительный баланс и собираем данные
 	runningBalance := 0.0
 	for i, point := range report.Trends.ExpenseTrend {
 		xValues[i] = point.Date
-		expenseValues[i] = point.Amount
+		expenseValues[i] = point.Amount // Amount уже отрицательный для расходов
 		incomeValues[i] = report.Trends.IncomeTrend[i].Amount
-		runningBalance += incomeValues[i] - expenseValues[i]
+		runningBalance += incomeValues[i] + expenseValues[i] // Прибавляем расходы (они отрицательные)
 		balanceValues[i] = runningBalance
+		// log.Printf("День %s: доход=%.2f, расход=%.2f, баланс=%.2f",
+		// 	point.Date.Format("2006-01-02"), incomeValues[i], expenseValues[i], runningBalance)
 	}
 
 	// Рассчитываем скользящие средние
@@ -68,6 +73,7 @@ func (g *ChartGenerator) GenerateFinancialDashboard(report *service.BaseReport) 
 
 	// Создаем график
 	graph := chart.Chart{
+		Title:  fmt.Sprintf("Финансовый обзор за %s", report.Period),
 		Width:  1200,
 		Height: 600,
 		Background: chart.Style{
@@ -82,7 +88,7 @@ func (g *ChartGenerator) GenerateFinancialDashboard(report *service.BaseReport) 
 		XAxis: chart.XAxis{
 			ValueFormatter: chart.TimeValueFormatterWithFormat("02.01"),
 			Style: chart.Style{
-				FontSize: 12,
+				FontSize:  12,
 				FontColor: chart.ColorBlack,
 			},
 		},
@@ -91,7 +97,7 @@ func (g *ChartGenerator) GenerateFinancialDashboard(report *service.BaseReport) 
 				return fmt.Sprintf("%.0f₽", v.(float64))
 			},
 			Style: chart.Style{
-				FontSize: 12,
+				FontSize:  12,
 				FontColor: chart.ColorBlack,
 			},
 		},
@@ -149,7 +155,7 @@ func (g *ChartGenerator) GenerateFinancialDashboard(report *service.BaseReport) 
 	// Добавляем легенду
 	graph.Elements = []chart.Renderable{
 		chart.Legend(&graph, chart.Style{
-			FontSize: 12,
+			FontSize:  12,
 			FontColor: chart.ColorBlack,
 		}),
 	}
@@ -224,7 +230,7 @@ func (g *ChartGenerator) GenerateExpenseChart(report *service.BaseReport) ([]byt
 
 	for i, point := range report.Trends.ExpenseTrend {
 		xValues[i] = point.Date
-		expenseValues[i] = point.Amount
+		expenseValues[i] = point.Amount // Amount уже отрицательный для расходов
 	}
 
 	for i, point := range report.Trends.IncomeTrend {
@@ -232,6 +238,7 @@ func (g *ChartGenerator) GenerateExpenseChart(report *service.BaseReport) ([]byt
 	}
 
 	graph := chart.Chart{
+		Title:  fmt.Sprintf("Динамика доходов и расходов за %s", report.Period),
 		Width:  800,
 		Height: 400,
 		Background: chart.Style{
@@ -241,13 +248,22 @@ func (g *ChartGenerator) GenerateExpenseChart(report *service.BaseReport) ([]byt
 				Right:  20,
 				Bottom: 20,
 			},
+			FillColor: chart.ColorWhite,
 		},
 		XAxis: chart.XAxis{
 			ValueFormatter: chart.TimeValueFormatterWithFormat("02.01"),
+			Style: chart.Style{
+				FontSize:  12,
+				FontColor: chart.ColorBlack,
+			},
 		},
 		YAxis: chart.YAxis{
 			ValueFormatter: func(v interface{}) string {
 				return fmt.Sprintf("%.0f₽", v.(float64))
+			},
+			Style: chart.Style{
+				FontSize:  12,
+				FontColor: chart.ColorBlack,
 			},
 		},
 		Series: []chart.Series{
@@ -257,6 +273,7 @@ func (g *ChartGenerator) GenerateExpenseChart(report *service.BaseReport) ([]byt
 				YValues: expenseValues,
 				Style: chart.Style{
 					StrokeColor: chart.ColorRed,
+					StrokeWidth: 2,
 				},
 			},
 			chart.TimeSeries{
@@ -265,9 +282,18 @@ func (g *ChartGenerator) GenerateExpenseChart(report *service.BaseReport) ([]byt
 				YValues: incomeValues,
 				Style: chart.Style{
 					StrokeColor: chart.ColorGreen,
+					StrokeWidth: 2,
 				},
 			},
 		},
+	}
+
+	// Добавляем легенду
+	graph.Elements = []chart.Renderable{
+		chart.Legend(&graph, chart.Style{
+			FontSize:  12,
+			FontColor: chart.ColorBlack,
+		}),
 	}
 
 	buffer := bytes.NewBuffer([]byte{})
@@ -293,24 +319,33 @@ func (g *ChartGenerator) GenerateCategoryPieChart(report *service.BaseReport, is
 		return nil, nil
 	}
 
+	// Добавляем период к заголовку
+	title = fmt.Sprintf("%s за %s", title, report.Period)
+
 	values := make([]chart.Value, 0)
 	total := 0.0
+	log.Printf("Начинаем формирование круговой диаграммы: %s", title)
+
 	for _, cat := range categories {
-		total += cat.Amount
+		absAmount := math.Abs(cat.Amount)
+		total += absAmount
+		// log.Printf("Категория %s: исходная сумма=%.2f, модуль=%.2f", cat.Name, cat.Amount, absAmount)
 	}
 
 	// Добавляем только категории с существенной долей (>1%)
 	for _, cat := range categories {
-		percentage := (cat.Amount / total) * 100
+		absAmount := math.Abs(cat.Amount)
+		percentage := (absAmount / total) * 100
 		if percentage > 1.0 {
 			values = append(values, chart.Value{
-				Label: fmt.Sprintf("%s: %.0f₽ (%.1f%%)", cat.Name, cat.Amount, percentage),
-				Value: cat.Amount,
+				Label: fmt.Sprintf("%s: %.0f₽ (%.1f%%)", cat.Name, absAmount, percentage),
+				Value: absAmount,
 				Style: chart.Style{
-					FontSize: 12,
+					FontSize:  12,
 					FontColor: chart.ColorBlack,
 				},
 			})
+			log.Printf("Добавлена секция для %s: сумма=%.2f, доля=%.2f%%", cat.Name, absAmount, percentage)
 		}
 	}
 
@@ -346,14 +381,16 @@ func (g *ChartGenerator) GenerateTrendChart(report *service.BaseReport) ([]byte,
 	expenseChanges := make([]float64, len(report.Trends.ExpenseTrend))
 	incomeChanges := make([]float64, len(report.Trends.IncomeTrend))
 
+	// Ограничиваем значения изменений в разумных пределах
 	for i, point := range report.Trends.ExpenseTrend {
 		xValues[i] = point.Date
-		expenseChanges[i] = point.Change
-		incomeChanges[i] = report.Trends.IncomeTrend[i].Change
+		// Ограничиваем изменения в пределах [-100%, +200%]
+		expenseChanges[i] = math.Max(math.Min(point.Change, 200), -100)
+		incomeChanges[i] = math.Max(math.Min(report.Trends.IncomeTrend[i].Change, 200), -100)
 	}
 
 	graph := chart.Chart{
-		Title: "Тренды изменений",
+		Title:  fmt.Sprintf("Тренды изменений за %s", report.Period),
 		Width:  1200,
 		Height: 600,
 		Background: chart.Style{
@@ -368,7 +405,7 @@ func (g *ChartGenerator) GenerateTrendChart(report *service.BaseReport) ([]byte,
 		XAxis: chart.XAxis{
 			ValueFormatter: chart.TimeValueFormatterWithFormat("02.01"),
 			Style: chart.Style{
-				FontSize: 12,
+				FontSize:  12,
 				FontColor: chart.ColorBlack,
 			},
 		},
@@ -377,8 +414,12 @@ func (g *ChartGenerator) GenerateTrendChart(report *service.BaseReport) ([]byte,
 				return fmt.Sprintf("%.0f%%", v.(float64))
 			},
 			Style: chart.Style{
-				FontSize: 12,
+				FontSize:  12,
 				FontColor: chart.ColorBlack,
+			},
+			Range: &chart.ContinuousRange{
+				Min: -100,
+				Max: 200,
 			},
 		},
 		Series: []chart.Series{
@@ -406,7 +447,7 @@ func (g *ChartGenerator) GenerateTrendChart(report *service.BaseReport) ([]byte,
 	// Добавляем легенду
 	graph.Elements = []chart.Renderable{
 		chart.Legend(&graph, chart.Style{
-			FontSize: 12,
+			FontSize:  12,
 			FontColor: chart.ColorBlack,
 		}),
 	}
@@ -430,8 +471,8 @@ func (g *ChartGenerator) GenerateBalanceChart(report *service.BaseReport) ([]byt
 			Style: chart.Style{
 				StrokeColor: chart.ColorBlue,
 				FillColor:   chart.ColorBlue.WithAlpha(100),
-				FontSize: 12,
-				FontColor: chart.ColorBlack,
+				FontSize:    12,
+				FontColor:   chart.ColorBlack,
 			},
 		},
 		{
@@ -440,8 +481,8 @@ func (g *ChartGenerator) GenerateBalanceChart(report *service.BaseReport) ([]byt
 			Style: chart.Style{
 				StrokeColor: chart.ColorBlue,
 				FillColor:   chart.ColorBlue,
-				FontSize: 12,
-				FontColor: chart.ColorBlack,
+				FontSize:    12,
+				FontColor:   chart.ColorBlack,
 			},
 		},
 		{
@@ -450,8 +491,8 @@ func (g *ChartGenerator) GenerateBalanceChart(report *service.BaseReport) ([]byt
 			Style: chart.Style{
 				StrokeColor: chart.ColorRed,
 				FillColor:   chart.ColorRed.WithAlpha(100),
-				FontSize: 12,
-				FontColor: chart.ColorBlack,
+				FontSize:    12,
+				FontColor:   chart.ColorBlack,
 			},
 		},
 		{
@@ -460,8 +501,8 @@ func (g *ChartGenerator) GenerateBalanceChart(report *service.BaseReport) ([]byt
 			Style: chart.Style{
 				StrokeColor: chart.ColorRed,
 				FillColor:   chart.ColorRed,
-				FontSize: 12,
-				FontColor: chart.ColorBlack,
+				FontSize:    12,
+				FontColor:   chart.ColorBlack,
 			},
 		},
 		{
@@ -470,8 +511,8 @@ func (g *ChartGenerator) GenerateBalanceChart(report *service.BaseReport) ([]byt
 			Style: chart.Style{
 				StrokeColor: chart.ColorGreen,
 				FillColor:   chart.ColorGreen.WithAlpha(100),
-				FontSize: 12,
-				FontColor: chart.ColorBlack,
+				FontSize:    12,
+				FontColor:   chart.ColorBlack,
 			},
 		},
 		{
@@ -480,21 +521,21 @@ func (g *ChartGenerator) GenerateBalanceChart(report *service.BaseReport) ([]byt
 			Style: chart.Style{
 				StrokeColor: chart.ColorGreen,
 				FillColor:   chart.ColorGreen,
-				FontSize: 12,
-				FontColor: chart.ColorBlack,
+				FontSize:    12,
+				FontColor:   chart.ColorBlack,
 			},
 		},
 	}
 
 	graph := chart.BarChart{
-		Title:      "Сравнение периодов",
+		Title: fmt.Sprintf("Сравнение периодов за %s", report.Period),
 		TitleStyle: chart.Style{
-			FontSize: 14,
+			FontSize:  14,
 			FontColor: chart.ColorBlack,
 		},
-		Width:      1200,
-		Height:     600,
-		BarWidth:   60,
+		Width:    1200,
+		Height:   600,
+		BarWidth: 60,
 		Background: chart.Style{
 			Padding: chart.Box{
 				Top:    50,
@@ -509,7 +550,7 @@ func (g *ChartGenerator) GenerateBalanceChart(report *service.BaseReport) ([]byt
 				return fmt.Sprintf("%.0f₽", v.(float64))
 			},
 			Style: chart.Style{
-				FontSize: 12,
+				FontSize:  12,
 				FontColor: chart.ColorBlack,
 			},
 		},
@@ -523,4 +564,4 @@ func (g *ChartGenerator) GenerateBalanceChart(report *service.BaseReport) ([]byt
 	}
 
 	return buffer.Bytes(), nil
-} 
+}

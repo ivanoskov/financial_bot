@@ -602,7 +602,7 @@ func (b *Bot) sendReport(chatID int64, userID int64, reportType service.ReportTy
 
 	// Статистика транзакций
 	text += "*Статистика транзакций:*\n"
-	text += fmt.Sprintf("• Всего: *%.0f* (💰 *%d*, 💸 *%d*)\n",
+	text += fmt.Sprintf("• Всего: *%.d* (💰 *%d*, 💸 *%d*)\n",
 		report.TransactionData.TotalCount,
 		report.TransactionData.IncomeCount,
 		report.TransactionData.ExpenseCount)

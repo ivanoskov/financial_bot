@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
-	"strconv"
-	"github.com/supabase-community/supabase-go"
-	"github.com/ivanoskov/financial_bot/internal/model"
-	"time"
 	"log"
+	"strconv"
+	"time"
+
+	"github.com/ivanoskov/financial_bot/internal/model"
+	"github.com/supabase-community/supabase-go"
 )
 
 type SupabaseRepository struct {
@@ -21,7 +21,7 @@ func NewSupabaseRepository(url, key string) (*SupabaseRepository, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &SupabaseRepository{
 		client: client,
 	}, nil
@@ -101,26 +101,21 @@ func (r *SupabaseRepository) GetTransactions(ctx context.Context, userID int64, 
 		query = query.Limit(filter.Limit, "")
 	}
 
-	// Добавляем сортировку по дате (сначала новые)
-	query = query.Order("created_at", nil)
+	// Сортируем по дате транзакции, а не по дате создания
+	query = query.Order("date", nil)
 
-	data, count, err := query.Execute()
+	data, _, err := query.Execute()
 	if err != nil {
 		log.Printf("Error getting transactions: %v", err)
 		return nil, fmt.Errorf("failed to get transactions: %w", err)
 	}
-	log.Printf("Got %d transactions. Response data: %s", count, string(data))
+	// log.Printf("Got %d transactions. Response data: %s", count, string(data))
 
 	var transactions []model.Transaction
 	if err := json.Unmarshal(data, &transactions); err != nil {
 		log.Printf("Error parsing transactions: %v", err)
 		return nil, fmt.Errorf("failed to parse transactions: %w", err)
 	}
-
-	// Сортируем транзакции по дате в памяти
-	sort.Slice(transactions, func(i, j int) bool {
-		return transactions[i].Date.After(transactions[j].Date)
-	})
 
 	return transactions, nil
 }
@@ -173,7 +168,21 @@ func (r *SupabaseRepository) UpdateCategory(ctx context.Context, category *model
 
 func (r *SupabaseRepository) DeleteCategory(ctx context.Context, id string, userID int64) error {
 	fmt.Printf("Deleting category %s for user %d\n", id, userID)
-	data, count, err := r.client.From("categories").
+
+	// Сначала удаляем все транзакции, связанные с этой категорией
+	data, count, err := r.client.From("transactions").
+		Delete("", "").
+		Eq("category_id", id).
+		Eq("user_id", strconv.FormatInt(userID, 10)).
+		Execute()
+	if err != nil {
+		fmt.Printf("Error deleting related transactions: %v\n", err)
+		return fmt.Errorf("failed to delete related transactions: %w", err)
+	}
+	fmt.Printf("Deleted %d related transactions. Response data: %s\n", count, string(data))
+
+	// Теперь удаляем саму категорию
+	data, count, err = r.client.From("categories").
 		Delete("", "").
 		Eq("id", id).
 		Eq("user_id", strconv.FormatInt(userID, 10)).
@@ -222,4 +231,4 @@ func (r *SupabaseRepository) GetAllUsers(ctx context.Context) ([]int64, error) {
 	return users, nil
 }
 
-// Реализация остальных методов репозитория... 
+// Реализация остальных методов репозитория...

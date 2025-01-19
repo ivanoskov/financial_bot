@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"time"
@@ -43,13 +44,17 @@ func NewExpenseTracker(repo Repository) *ExpenseTracker {
 }
 
 func (s *ExpenseTracker) AddTransaction(ctx context.Context, userID int64, categoryID string, amount float64, description string) error {
+	now := time.Now()
+	// Нормализуем дату до начала дня
+	transactionDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
 	transaction := &model.Transaction{
 		UserID:      userID,
 		CategoryID:  categoryID,
 		Amount:      amount,
 		Description: description,
-		Date:        time.Now(),
-		CreatedAt:   time.Now(),
+		Date:        transactionDate,
+		CreatedAt:   now,
 	}
 	transaction.GenerateID()
 	return s.repo.CreateTransaction(ctx, transaction)
@@ -304,16 +309,50 @@ type PeriodStats struct {
 	IncomeByCategory   map[string]float64
 }
 
+// calculateTrendPercent вычисляет процент изменения
+func calculateTrendPercent(current, previous float64) float64 {
+	if previous == 0 {
+		if current > 0 {
+			return 100 // Рост с нуля
+		}
+		return 0 // Нет изменений, если оба значения нулевые
+	}
+
+	// Если значения имеют разные знаки или текущее значение намного меньше предыдущего
+	if (current < 0 && previous > 0) || (current > 0 && previous < 0) {
+		return -100 // Полное изменение в противоположную сторону
+	}
+
+	// Для случаев, когда текущее значение намного меньше предыдущего
+	if math.Abs(current) < math.Abs(previous) {
+		decrease := ((math.Abs(previous) - math.Abs(current)) / math.Abs(current)) * 100
+		return -decrease // Возвращаем отрицательный процент
+	}
+
+	// Для случаев, когда текущее значение больше предыдущего
+	increase := ((math.Abs(current) - math.Abs(previous)) / math.Abs(previous)) * 100
+	return increase
+}
+
 // formatChange форматирует изменение значения в процентах
 func formatChange(current, previous float64) string {
 	if previous == 0 {
 		return ""
 	}
-	change := ((current - previous) / previous) * 100
-	if change > 0 {
-		return fmt.Sprintf(" `+%.1f%%`", change)
+
+	change := calculateTrendPercent(current, previous)
+
+	// Ограничиваем отображение процентов разумными пределами
+	if change < -1000 {
+		change = -1000
+	} else if change > 1000 {
+		change = 1000
 	}
-	return fmt.Sprintf(" `%.1f%%`", change)
+
+	if change > 0 {
+		return fmt.Sprintf(" (+%.1f%%⬆️)", change)
+	}
+	return fmt.Sprintf(" (%.1f%%⬇️)", change)
 }
 
 // formatCategoryStats форматирует статистику по категориям с изменениями
@@ -340,14 +379,6 @@ func formatCategoryStats(current, previous map[string]float64) []model.CategoryS
 		return stats[i].Amount > stats[j].Amount
 	})
 	return stats
-}
-
-// calculateTrendPercent вычисляет процент изменения
-func calculateTrendPercent(current, previous float64) float64 {
-	if previous == 0 {
-		return 0
-	}
-	return ((current - previous) / previous) * 100
 }
 
 // analyzePeriod анализирует транзакции за период
@@ -449,17 +480,23 @@ func (s *ExpenseTracker) GetReport(ctx context.Context, userID int64, reportType
 
 	switch reportType {
 	case DailyReport:
+		// Устанавливаем начало дня (00:00:00) и конец дня (23:59:59)
 		startDate = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-		endDate = now
+		endDate = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, now.Location())
 	case WeeklyReport:
-		startDate = now.AddDate(0, 0, -7)
-		endDate = now
+		// Начало недели (7 дней назад)
+		startDate = time.Date(now.Year(), now.Month(), now.Day()-7, 0, 0, 0, 0, now.Location())
+		endDate = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, now.Location())
 	case MonthlyReport:
+		// Начало текущего месяца
 		startDate = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-		endDate = now
+		// Конец текущего месяца
+		endDate = time.Date(now.Year(), now.Month()+1, 0, 23, 59, 59, 999999999, now.Location())
 	case YearlyReport:
+		// Начало текущего года
 		startDate = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, now.Location())
-		endDate = now
+		// Конец текущего года
+		endDate = time.Date(now.Year(), 12, 31, 23, 59, 59, 999999999, now.Location())
 	}
 
 	// Получаем транзакции за текущий период
@@ -471,10 +508,14 @@ func (s *ExpenseTracker) GetReport(ctx context.Context, userID int64, reportType
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current period transactions: %w", err)
 	}
+	log.Printf("Получено транзакций за текущий период: %d", len(currentTransactions))
 
-	// Получаем транзакции за предыдущий период
-	prevStartDate := startDate.AddDate(0, -1, 0)
-	prevEndDate := endDate.AddDate(0, -1, 0)
+	// Получаем транзакции за предыдущий период такой же длительности
+	var prevStartDate, prevEndDate time.Time
+	periodDuration := endDate.Sub(startDate)
+	prevEndDate = startDate.Add(-time.Nanosecond)
+	prevStartDate = prevEndDate.Add(-periodDuration).Add(time.Nanosecond)
+
 	prevFilter := model.TransactionFilter{
 		StartDate: &prevStartDate,
 		EndDate:   &prevEndDate,
@@ -483,6 +524,7 @@ func (s *ExpenseTracker) GetReport(ctx context.Context, userID int64, reportType
 	if err != nil {
 		return nil, fmt.Errorf("failed to get previous period transactions: %w", err)
 	}
+	log.Printf("Получено транзакций за предыдущий период: %d", len(prevTransactions))
 
 	// Получаем категории
 	categories, err := s.repo.GetCategories(ctx, userID)
@@ -506,6 +548,9 @@ func (s *ExpenseTracker) GetReport(ctx context.Context, userID int64, reportType
 }
 
 func (s *ExpenseTracker) fillTransactionStats(report *BaseReport, transactions []model.Transaction, categories []model.Category) {
+	log.Printf("Начинаем анализ транзакций. Всего транзакций: %d, период: %s - %s",
+		len(transactions), report.StartDate.Format("2006-01-02"), report.EndDate.Format("2006-01-02"))
+
 	stats := &report.TransactionData
 	categoryNames := make(map[string]string)
 	for _, cat := range categories {
@@ -513,10 +558,21 @@ func (s *ExpenseTracker) fillTransactionStats(report *BaseReport, transactions [
 	}
 
 	var totalIncome, totalExpense float64
+	var incomeCount, expenseCount int
+
+	// Фильтруем и считаем транзакции только за указанный период
 	for _, t := range transactions {
+		// Пропускаем транзакции вне периода
+		if t.Date.Before(report.StartDate) || t.Date.After(report.EndDate) {
+			continue
+		}
+
+		log.Printf("Обработка транзакции: ID=%s, Сумма=%.2f, Дата=%s, Категория=%s, Описание=%s",
+			t.ID, t.Amount, t.Date.Format("2006-01-02"), categoryNames[t.CategoryID], t.Description)
+
 		if t.Amount > 0 {
 			totalIncome += t.Amount
-			stats.IncomeCount++
+			incomeCount++
 			if t.Amount > stats.MaxIncome.Amount {
 				stats.MaxIncome = model.TransactionInfo{
 					Amount:      t.Amount,
@@ -528,7 +584,7 @@ func (s *ExpenseTracker) fillTransactionStats(report *BaseReport, transactions [
 		} else {
 			expense := -t.Amount
 			totalExpense += expense
-			stats.ExpenseCount++
+			expenseCount++
 			if expense > stats.MaxExpense.Amount {
 				stats.MaxExpense = model.TransactionInfo{
 					Amount:      expense,
@@ -540,65 +596,110 @@ func (s *ExpenseTracker) fillTransactionStats(report *BaseReport, transactions [
 		}
 	}
 
-	stats.TotalCount = len(transactions)
+	stats.TotalCount = incomeCount + expenseCount
+	stats.IncomeCount = incomeCount
+	stats.ExpenseCount = expenseCount
 	report.TotalIncome = totalIncome
 	report.TotalExpenses = totalExpense
 	report.Balance = totalIncome - totalExpense
 
 	// Вычисляем средние значения
-	days := float64(report.EndDate.Sub(report.StartDate).Hours() / 24)
-	if days > 0 {
-		stats.DailyAvgIncome = totalIncome / days
-		stats.DailyAvgExpense = totalExpense / days
+	days := float64(report.EndDate.Sub(report.StartDate).Hours()/24) + 1 // +1 чтобы включить текущий день
+	if days < 1 {
+		days = 1
 	}
-	if stats.IncomeCount > 0 {
-		stats.AvgIncome = totalIncome / float64(stats.IncomeCount)
+
+	stats.DailyAvgIncome = totalIncome / days
+	stats.DailyAvgExpense = totalExpense / days
+
+	if incomeCount > 0 {
+		stats.AvgIncome = totalIncome / float64(incomeCount)
 	}
-	if stats.ExpenseCount > 0 {
-		stats.AvgExpense = totalExpense / float64(stats.ExpenseCount)
+	if expenseCount > 0 {
+		stats.AvgExpense = totalExpense / float64(expenseCount)
 	}
+
+	log.Printf("Итоги анализа за %d дней:", int(days))
+	log.Printf("Доходы=%.2f (среднее в день=%.2f), Кол-во=%d, Средний доход=%.2f",
+		totalIncome, stats.DailyAvgIncome, incomeCount, stats.AvgIncome)
+	log.Printf("Расходы=%.2f (среднее в день=%.2f), Кол-во=%d, Средний расход=%.2f",
+		totalExpense, stats.DailyAvgExpense, expenseCount, stats.AvgExpense)
+	log.Printf("Баланс=%.2f", report.Balance)
 }
 
 func (s *ExpenseTracker) fillCategoryAnalytics(report *BaseReport, currentTransactions, prevTransactions []model.Transaction, categories []model.Category) {
+	log.Printf("Начинаем анализ категорий. Текущих транзакций: %d, Предыдущих транзакций: %d",
+		len(currentTransactions), len(prevTransactions))
+
 	// Создаем мапы для быстрого доступа
 	categoryStats := make(map[string]*model.CategoryStats)
 	prevCategoryAmounts := make(map[string]float64)
-	categoryNames := make(map[string]string)
 	categoryTypes := make(map[string]string)
 
+	// Инициализируем мапы категорий
 	for _, cat := range categories {
-		categoryNames[cat.ID] = cat.Name
 		categoryTypes[cat.ID] = cat.Type
 		categoryStats[cat.ID] = &model.CategoryStats{
 			CategoryID: cat.ID,
 			Name:       cat.Name,
+			Amount:     0,
+			Count:      0,
 		}
-	}
-
-	// Анализируем предыдущий период
-	for _, t := range prevTransactions {
-		prevCategoryAmounts[t.CategoryID] += t.Amount
 	}
 
 	// Анализируем текущий период
 	for _, t := range currentTransactions {
-		stats := categoryStats[t.CategoryID]
-		if stats == nil {
+		// Проверяем, что транзакция входит в текущий период
+		if t.Date.Before(report.StartDate) || t.Date.After(report.EndDate) {
+			// log.Printf("Пропускаем транзакцию вне периода: %s (сумма: %.2f)", t.Date.Format("2006-01-02"), t.Amount)
 			continue
 		}
 
-		amount := t.Amount
-		if amount < 0 {
-			amount = -amount
+		if stats, ok := categoryStats[t.CategoryID]; ok {
+			stats.Amount += t.Amount // Сохраняем оригинальное значение (положительное для доходов, отрицательное для расходов)
+			stats.Count++
+			log.Printf("Добавлена транзакция в категорию %s: %.2f (всего: %.2f)", stats.Name, t.Amount, stats.Amount)
 		}
-		stats.Amount += amount
-		stats.Count++
+	}
+
+	// Получаем даты для предыдущего периода
+	periodDuration := report.EndDate.Sub(report.StartDate)
+	prevPeriodEnd := report.StartDate.Add(-time.Nanosecond)
+	prevPeriodStart := prevPeriodEnd.Add(-periodDuration).Add(time.Nanosecond)
+
+	// Анализируем предыдущий период
+	for _, t := range prevTransactions {
+		// Проверяем, что транзакция входит в предыдущий период
+		if t.Date.Before(prevPeriodStart) || t.Date.After(prevPeriodEnd) {
+			continue
+		}
+
+		if _, ok := categoryStats[t.CategoryID]; ok {
+			prevCategoryAmounts[t.CategoryID] += t.Amount
+		}
 	}
 
 	// Вычисляем статистику по категориям
+	var totalIncome, totalExpense float64
 	for _, stats := range categoryStats {
 		if stats.Count > 0 {
 			stats.AvgAmount = stats.Amount / float64(stats.Count)
+
+			// Определяем тип категории и считаем общие суммы
+			if categoryTypes[stats.CategoryID] == "income" {
+				totalIncome += stats.Amount
+			} else {
+				totalExpense += math.Abs(stats.Amount)
+			}
+			log.Printf("Категория %s: сумма=%.2f, количество=%d, средняя=%.2f",
+				stats.Name, stats.Amount, stats.Count, stats.AvgAmount)
+		}
+	}
+
+	// Вычисляем доли и формируем итоговые списки
+	for _, stats := range categoryStats {
+		if stats.Count == 0 {
+			continue // Пропускаем категории без транзакций
 		}
 
 		// Вычисляем тренд
@@ -607,30 +708,40 @@ func (s *ExpenseTracker) fillCategoryAnalytics(report *BaseReport, currentTransa
 			stats.TrendPercent = calculateTrendPercent(stats.Amount, prevAmount)
 		}
 
-		// Определяем долю от общей суммы в зависимости от типа категории
 		if categoryTypes[stats.CategoryID] == "income" {
-			if report.TotalIncome > 0 {
-				stats.Share = (stats.Amount / report.TotalIncome) * 100
-				report.CategoryData.Income = append(report.CategoryData.Income, *stats)
+			if totalIncome > 0 {
+				stats.Share = (stats.Amount / totalIncome) * 100
 			}
+			report.CategoryData.Income = append(report.CategoryData.Income, *stats)
+			log.Printf("Добавлен доход %s: сумма=%.2f, доля=%.2f%%", stats.Name, stats.Amount, stats.Share)
 		} else {
-			if report.TotalExpenses > 0 {
-				stats.Share = (stats.Amount / report.TotalExpenses) * 100
-				report.CategoryData.Expenses = append(report.CategoryData.Expenses, *stats)
+			if totalExpense > 0 {
+				stats.Share = (math.Abs(stats.Amount) / totalExpense) * 100
 			}
+			report.CategoryData.Expenses = append(report.CategoryData.Expenses, *stats)
+			log.Printf("Добавлен расход %s: сумма=%.2f, доля=%.2f%%", stats.Name, stats.Amount, stats.Share)
 		}
 	}
 
-	// Сортируем категории по сумме
+	// Сортируем категории по абсолютному значению суммы
 	sort.Slice(report.CategoryData.Income, func(i, j int) bool {
 		return report.CategoryData.Income[i].Amount > report.CategoryData.Income[j].Amount
 	})
 	sort.Slice(report.CategoryData.Expenses, func(i, j int) bool {
-		return report.CategoryData.Expenses[i].Amount > report.CategoryData.Expenses[j].Amount
+		return math.Abs(report.CategoryData.Expenses[i].Amount) > math.Abs(report.CategoryData.Expenses[j].Amount)
 	})
 
-	// Находим категории с наибольшими изменениями
+	// Создаем мапу имен категорий для findCategoryChanges
+	categoryNames := make(map[string]string)
+	for _, cat := range categories {
+		categoryNames[cat.ID] = cat.Name
+	}
+
+	// Находим значительные изменения
 	s.findCategoryChanges(&report.CategoryData.Changes, categoryStats, prevCategoryAmounts, categoryNames)
+
+	log.Printf("Итоги по категориям: Доходы=%d категорий, Расходы=%d категорий",
+		len(report.CategoryData.Income), len(report.CategoryData.Expenses))
 }
 
 func (s *ExpenseTracker) fillTrendAnalytics(report *BaseReport, currentTransactions, prevTransactions []model.Transaction, categories []model.Category) {
@@ -641,33 +752,127 @@ func (s *ExpenseTracker) fillTrendAnalytics(report *BaseReport, currentTransacti
 	report.Trends.ExpenseTrend = make([]TrendPoint, 0)
 	report.Trends.IncomeTrend = make([]TrendPoint, 0)
 
-	// Заполняем тренды
-	var prevDayIncome, prevDayExpense float64
+	// Вычисляем средние значения за период
+	var totalIncome, totalExpense float64
+	var daysWithIncome, daysWithExpense int
+	for _, stats := range currentDaily {
+		if stats.income > 0 {
+			totalIncome += stats.income
+			daysWithIncome++
+		}
+		if stats.expense > 0 {
+			totalExpense += stats.expense
+			daysWithExpense++
+		}
+	}
+
+	// Вычисляем средние значения только для дней с транзакциями
+	avgDailyIncome := 0.0
+	if daysWithIncome > 0 {
+		avgDailyIncome = totalIncome / float64(daysWithIncome)
+	}
+
+	avgDailyExpense := 0.0
+	if daysWithExpense > 0 {
+		avgDailyExpense = totalExpense / float64(daysWithExpense)
+	}
+
+	log.Printf("Средние значения: доход=%.2f (%d дней), расход=%.2f (%d дней)",
+		avgDailyIncome, daysWithIncome, avgDailyExpense, daysWithExpense)
+
+	// Заполняем тренды для текущего периода
 	for date := report.StartDate; !date.After(report.EndDate); date = date.AddDate(0, 0, 1) {
 		dayKey := date.Format("2006-01-02")
 		dayStats := currentDaily[dayKey]
 
-		// Тренд доходов
+		// Тренд доходов: отклонение от среднего в процентах
+		incomeChange := calculateTrendPercent(dayStats.income, avgDailyIncome)
 		incomeTrend := TrendPoint{
 			Date:   date,
 			Amount: dayStats.income,
-			Change: dayStats.income - prevDayIncome,
+			Change: incomeChange,
 		}
 		report.Trends.IncomeTrend = append(report.Trends.IncomeTrend, incomeTrend)
-		prevDayIncome = dayStats.income
 
-		// Тренд расходов
+		// Тренд расходов: отклонение от среднего в процентах
+		expenseChange := calculateTrendPercent(dayStats.expense, avgDailyExpense)
 		expenseTrend := TrendPoint{
 			Date:   date,
-			Amount: dayStats.expense,
-			Change: dayStats.expense - prevDayExpense,
+			Amount: -dayStats.expense, // Сохраняем расходы как отрицательные значения
+			Change: expenseChange,
 		}
 		report.Trends.ExpenseTrend = append(report.Trends.ExpenseTrend, expenseTrend)
-		prevDayExpense = dayStats.expense
+
+		// log.Printf("Тренды за %s: доход=%.2f (%.1f%%), расход=%.2f (%.1f%%)",
+		// 	dayKey, dayStats.income, incomeChange, -dayStats.expense, expenseChange)
 	}
 
 	// Заполняем сравнение периодов
-	report.Trends.PeriodComparison = s.comparePeriods(currentTransactions, prevTransactions, report.StartDate, report.EndDate)
+	var currentPeriod, prevPeriod PeriodStats
+	days := float64(report.EndDate.Sub(report.StartDate).Hours() / 24)
+	if days < 1 {
+		days = 1
+	}
+
+	// Считаем текущий период
+	for _, t := range currentTransactions {
+		if t.Date.Before(report.StartDate) || t.Date.After(report.EndDate) {
+			continue
+		}
+		if t.Amount > 0 {
+			currentPeriod.TotalIncome += t.Amount
+		} else {
+			currentPeriod.TotalExpenses += -t.Amount
+		}
+	}
+	currentPeriod.Balance = currentPeriod.TotalIncome - currentPeriod.TotalExpenses
+	currentPeriod.DailyAvgIncome = currentPeriod.TotalIncome / days
+	currentPeriod.DailyAvgExpense = currentPeriod.TotalExpenses / days
+
+	// Получаем даты для предыдущего периода
+	periodDuration := report.EndDate.Sub(report.StartDate)
+	prevPeriodEnd := report.StartDate.Add(-time.Nanosecond)
+	prevPeriodStart := prevPeriodEnd.Add(-periodDuration).Add(time.Nanosecond)
+
+	// Считаем предыдущий период
+	for _, t := range prevTransactions {
+		if t.Date.Before(prevPeriodStart) || t.Date.After(prevPeriodEnd) {
+			continue
+		}
+		if t.Amount > 0 {
+			prevPeriod.TotalIncome += t.Amount
+		} else {
+			prevPeriod.TotalExpenses += -t.Amount
+		}
+	}
+	prevPeriod.Balance = prevPeriod.TotalIncome - prevPeriod.TotalExpenses
+	prevPeriod.DailyAvgIncome = prevPeriod.TotalIncome / days
+	prevPeriod.DailyAvgExpense = prevPeriod.TotalExpenses / days
+
+	// Вычисляем изменения с ограничением в пределах [-100%, +200%]
+	if prevPeriod.TotalExpenses > 0 {
+		expenseChange := calculateTrendPercent(currentPeriod.TotalExpenses, prevPeriod.TotalExpenses)
+		report.Trends.PeriodComparison.ExpenseChange = math.Max(math.Min(expenseChange, 200), -100)
+	}
+	if prevPeriod.TotalIncome > 0 {
+		incomeChange := calculateTrendPercent(currentPeriod.TotalIncome, prevPeriod.TotalIncome)
+		report.Trends.PeriodComparison.IncomeChange = math.Max(math.Min(incomeChange, 200), -100)
+	}
+	if prevPeriod.Balance != 0 {
+		balanceChange := calculateTrendPercent(currentPeriod.Balance, prevPeriod.Balance)
+		report.Trends.PeriodComparison.BalanceChange = math.Max(math.Min(balanceChange, 200), -100)
+	}
+
+	report.Trends.PeriodComparison.CurrentPeriod = currentPeriod
+	report.Trends.PeriodComparison.PrevPeriod = prevPeriod
+
+	log.Printf("Сравнение периодов: Текущий (Доходы=%.2f, Расходы=%.2f, Баланс=%.2f), Предыдущий (Доходы=%.2f, Расходы=%.2f, Баланс=%.2f)",
+		currentPeriod.TotalIncome, currentPeriod.TotalExpenses, currentPeriod.Balance,
+		prevPeriod.TotalIncome, prevPeriod.TotalExpenses, prevPeriod.Balance)
+	log.Printf("Изменения: Доходы=%.1f%%, Расходы=%.1f%%, Баланс=%.1f%%",
+		report.Trends.PeriodComparison.IncomeChange,
+		report.Trends.PeriodComparison.ExpenseChange,
+		report.Trends.PeriodComparison.BalanceChange)
 }
 
 type dailyStats struct {
@@ -690,52 +895,6 @@ func (s *ExpenseTracker) groupTransactionsByDay(transactions []model.Transaction
 	return daily
 }
 
-func (s *ExpenseTracker) comparePeriods(current, prev []model.Transaction, startDate, endDate time.Time) PeriodComparison {
-	var comp PeriodComparison
-	days := float64(endDate.Sub(startDate).Hours() / 24)
-
-	// Текущий период
-	for _, t := range current {
-		if t.Amount > 0 {
-			comp.CurrentPeriod.TotalIncome += t.Amount
-		} else {
-			comp.CurrentPeriod.TotalExpenses += -t.Amount
-		}
-	}
-	comp.CurrentPeriod.Balance = comp.CurrentPeriod.TotalIncome - comp.CurrentPeriod.TotalExpenses
-	if days > 0 {
-		comp.CurrentPeriod.DailyAvgIncome = comp.CurrentPeriod.TotalIncome / days
-		comp.CurrentPeriod.DailyAvgExpense = comp.CurrentPeriod.TotalExpenses / days
-	}
-
-	// Предыдущий период
-	for _, t := range prev {
-		if t.Amount > 0 {
-			comp.PrevPeriod.TotalIncome += t.Amount
-		} else {
-			comp.PrevPeriod.TotalExpenses += -t.Amount
-		}
-	}
-	comp.PrevPeriod.Balance = comp.PrevPeriod.TotalIncome - comp.PrevPeriod.TotalExpenses
-	if days > 0 {
-		comp.PrevPeriod.DailyAvgIncome = comp.PrevPeriod.TotalIncome / days
-		comp.PrevPeriod.DailyAvgExpense = comp.PrevPeriod.TotalExpenses / days
-	}
-
-	// Вычисляем изменения
-	if comp.PrevPeriod.TotalExpenses > 0 {
-		comp.ExpenseChange = ((comp.CurrentPeriod.TotalExpenses - comp.PrevPeriod.TotalExpenses) / comp.PrevPeriod.TotalExpenses) * 100
-	}
-	if comp.PrevPeriod.TotalIncome > 0 {
-		comp.IncomeChange = ((comp.CurrentPeriod.TotalIncome - comp.PrevPeriod.TotalIncome) / comp.PrevPeriod.TotalIncome) * 100
-	}
-	if comp.PrevPeriod.Balance != 0 {
-		comp.BalanceChange = ((comp.CurrentPeriod.Balance - comp.PrevPeriod.Balance) / math.Abs(comp.PrevPeriod.Balance)) * 100
-	}
-
-	return comp
-}
-
 func (s *ExpenseTracker) findCategoryChanges(changes *model.CategoryChanges, currentStats map[string]*model.CategoryStats, prevAmounts map[string]float64, categoryNames map[string]string) {
 	var maxGrowthExpense, maxGrowthIncome, maxDropExpense, maxDropIncome model.CategoryChange
 
@@ -743,7 +902,7 @@ func (s *ExpenseTracker) findCategoryChanges(changes *model.CategoryChanges, cur
 		prevAmount := prevAmounts[catID]
 		change := stats.Amount - prevAmount
 		if prevAmount != 0 {
-			changePercent := (change / math.Abs(prevAmount)) * 100
+			changePercent := calculateTrendPercent(change, prevAmount)
 
 			categoryChange := model.CategoryChange{
 				CategoryID:    catID,
