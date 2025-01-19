@@ -7,10 +7,6 @@
 /*.dylib
 main
 
-# Go-модули
-go.sum
-go.mod
-
 # Кэш тестирования Go
 *.test
 
