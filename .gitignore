@@ -1,0 +1,31 @@
+# Бинарные файлы и кэш Go
+/bin/
+/pkg/
+/*.exe
+/*.dll
+/*.so
+/*.dylib
+
+# Go-модули
+go.sum
+go.mod
+
+# Кэш тестирования Go
+*.test
+
+# IDE и редакторы
+.vscode/
+.idea/
+*.iml
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+
+# Логи и отладочные файлы
+*.log
+*.out
+*.tmp
+
+# .env
+.env
