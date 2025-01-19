@@ -1,106 +1,131 @@
-# Financial Bot
+# Telegram-бот для учета личных финансов, написанный на Go
 
-Telegram-бот для учета личных финансов, написанный на Go. Проект демонстрирует практическое применение чистой архитектуры, работу с Telegram Bot API и визуализацию данных.
+Проект демонстрирует практическое применение чистой архитектуры, работу с Telegram Bot API и визуализацию данных. Разработан с целью тестирования использования Golang в serverless архитектуре.
+
+## Режимы работы
+
+Бот поддерживает два режима работы:
+
+### 1. Long Polling Mode
+
+Классический режим работы через long polling:
+```bash
+go build cmd/bot/main.go
+./main
+```
+
+### 2. Serverless Mode (AWS Lambda)
+
+Бот может работать в serverless режиме через AWS Lambda или аналогичные сервисы:
+
+- `cmd/function/WebhookHandler` - обработка входящих сообщений через webhook
+- `cmd/function/DailyReportHandler` - отправка ежедневных отчетов (триггер по расписанию)
+
+#### Настройка Webhook
+
+1. Разверните функцию в AWS Lambda
+2. Создайте API Gateway endpoint
+3. Настройте webhook в Telegram:
+```bash
+curl -X POST https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook \
+     -H "Content-Type: application/json" \
+     -d '{"url": "https://your-api-gateway-url/prod/webhook"}'
+```
 
 ## Архитектура
 
-Проект следует принципам чистой архитектуры с четким разделением на слои:
+Проект построен с использованием принципов чистой архитектуры:
 
 ```
 .
 ├── cmd/
-│   └── bot/            # Точка входа приложения
+│   ├── bot/              # Точка входа для long polling режима
+│   └── function/         # AWS Lambda handlers
 ├── internal/
-│   ├── bot/           # Обработка Telegram-взаимодействий
-│   ├── model/         # Доменные модели
-│   ├── repository/    # Слой данных (Supabase)
-│   ├── service/       # Бизнес-логика
-│   └── charts/        # Генерация графиков
+│   ├── bot/             # Telegram бот и обработка команд
+│   ├── model/           # Доменные модели
+│   ├── repository/      # Работа с данными (Supabase)
+│   ├── service/         # Бизнес-логика
+│   ├── charts/          # Генерация графиков
+│   └── config/          # Конфигурация
+└── migrations/          # Миграции бд
 ```
 
-### Ключевые особенности реализации
+### Технические решения
 
 #### 1. Управление состоянием
 
-Бот использует паттерн конечного автомата для управления диалогами:
-
-```go
-type UserState struct {
-    SelectedCategoryID string
-    TransactionType    string    // "income" или "expense"
-    AwaitingAction    string    // "new_category" или пусто
-}
-```
+- Паттерн конечного автомата для управления диалогами
+- In-memory хранение состояний пользователей
+- Автоматический сброс состояния после завершения операций
 
 #### 2. Работа с данными
 
 - **База данных**: Supabase (PostgreSQL)
-- **Структура таблиц**:
-  - `categories`: Категории доходов/расходов
-  - `transactions`: Финансовые операции
+- **Схема данных**:
+  ```sql
+  -- Категории доходов/расходов
+  CREATE TABLE categories (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      user_id BIGINT NOT NULL,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  );
 
-Пример работы с Supabase:
-```go
-func (r *SupabaseRepository) GetTransactions(ctx context.Context, userID int64, filter model.TransactionFilter) ([]model.Transaction, error) {
-    query := r.client.From("transactions").
-        Select("*", "", false).
-        Eq("user_id", strconv.FormatInt(userID, 10))
-    
-    // Применение фильтров и сортировка
-    if filter.StartDate != nil {
-        query = query.Gte("date", filter.StartDate)
-    }
-    query = query.Order("created_at", nil)
-    
-    // In-memory сортировка для корректного отображения
-    sort.Slice(transactions, func(i, j int) bool { 
-        return transactions[i].Date.After(transactions[j].Date) 
-    })
-}
-```
+  -- Финансовые операции
+  CREATE TABLE transactions (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      user_id BIGINT NOT NULL,
+      category_id UUID REFERENCES categories(id),
+      amount DECIMAL NOT NULL,
+      description TEXT,
+      date TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  );
+  ```
 
 #### 3. Визуализация данных
 
 Использует библиотеку `go-chart` для генерации графиков:
 
-- Динамика доходов/расходов (линейный график)
-- Распределение по категориям (круговые диаграммы)
-- Тренды изменений (линейный график с процентами)
-- Сравнение периодов (столбчатая диаграмма)
+- **Типы графиков**:
+  - Линейные графики (динамика доходов/расходов)
+  - Круговые диаграммы (распределение по категориям)
+  - Столбчатые диаграммы (сравнение периодов)
 
-Особенности:
-- Автоматическое масштабирование
-- Поддержка легенд и подписей
-- Оптимизированные размеры для Telegram
-- Фильтрация незначительных категорий (<1%)
+- **Оптимизации**:
+  - Предварительная фильтрация данных
+  - Адаптивные размеры для Telegram
+  - Группировка малых категорий
+  - Оптимизированные форматы изображений
 
 #### 4. Аналитика и отчеты
 
-Реализованы различные типы отчетов:
-```go
-type ReportType int
+- **Типы отчетов**:
+  ```go
+  type ReportType int
 
-const (
-    DailyReport ReportType = iota
-    WeeklyReport
-    MonthlyReport
-    YearlyReport
-)
-```
+  const (
+      DailyReport ReportType = iota
+      WeeklyReport
+      MonthlyReport
+      YearlyReport
+  )
+  ```
 
-Каждый отчет включает:
-- Основные показатели (доходы, расходы, баланс)
-- Сравнение с предыдущим периодом
-- Статистику по категориям
-- Тренды и изменения
+- **Метрики**:
+  - Основные показатели (доходы, расходы, баланс)
+  - Сравнение с предыдущими периодами
+  - Тренды и изменения
+  - Статистика по категориям
 
 #### 5. Обработка ошибок
 
-Реализована многоуровневая обработка ошибок:
-- Валидация на уровне бота
-- Бизнес-логика в сервисном слое
-- Обработка ошибок БД
+- Многоуровневая валидация
+- Контекстные ошибки
 - Информативные сообщения пользователю
+- Логирование для отладки
 
 ### Используемые библиотеки
 
@@ -121,7 +146,6 @@ const (
    - Оптимизированные форматы для Telegram
 
 3. **UX-решения**
-   - Интуитивная навигация
    - Информативные сообщения об ошибках
    - Поддержка частичного ввода (транзакции без описания)
 
@@ -129,10 +153,12 @@ const (
    - Чистая архитектура
    - Независимые модули
    - Легкое добавление новых типов отчетов и графиков
+   * Слабое звено - несколько не разделенных файлов, которые можно разделить на модули
 
 ## Развертывание
 
-1. Создайте проект в Supabase и настройте таблицы:
+### 1. Подготовка Supabase
+
 ```sql
 CREATE TABLE categories (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -153,15 +179,29 @@ CREATE TABLE transactions (
 );
 ```
 
-2. Настройте переменные окружения:
+### 2. Настройка окружения
+
 ```bash
+# Для обоих режимов работы
 export BOT_TOKEN="your_telegram_bot_token"
 export SUPABASE_URL="your_supabase_url"
 export SUPABASE_KEY="your_supabase_key"
 ```
 
-3. Запустите бота:
+### 3. Запуск
+
+#### Long Polling Mode
 ```bash
 go build cmd/bot/main.go
 ./main
-``` 
+```
+
+#### Serverless Mode
+1. Создайте ZIP для AWS Lambda:
+```bash
+zip function.zip bootstrap
+```
+
+2. Загрузите ZIP в AWS Lambda и настройте триггеры:
+   - API Gateway для webhook
+   - EventBridge для ежедневных отчетов 

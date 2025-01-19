@@ -6,7 +6,18 @@ import (
 	"math"
 	"sort"
 	"time"
+
 	"github.com/ivanoskov/financial_bot/internal/model"
+)
+
+// ReportType определяет тип отчета
+type ReportType int
+
+const (
+	DailyReport ReportType = iota
+	WeeklyReport
+	MonthlyReport
+	YearlyReport
 )
 
 // ExpenseTracker предоставляет методы для работы с финансовыми данными
@@ -48,7 +59,7 @@ func (s *ExpenseTracker) GetMonthlyReport(ctx context.Context, userID int64) (*B
 	now := time.Now()
 	currentStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	currentEnd := currentStart.AddDate(0, 1, 0).Add(-time.Second)
-	
+
 	// Получаем данные за текущий месяц
 	currentTransactions, err := s.repo.GetTransactions(ctx, userID, model.TransactionFilter{
 		StartDate: &currentStart,
@@ -81,7 +92,7 @@ func (s *ExpenseTracker) GetMonthlyReport(ctx context.Context, userID int64) (*B
 
 	// Анализируем текущий месяц
 	currentPeriod := analyzePeriod(currentTransactions, currentStart, currentEnd, categoryNames)
-	
+
 	// Анализируем предыдущий месяц
 	prevPeriod := analyzePeriod(prevTransactions, prevStart, prevEnd, categoryNames)
 
@@ -126,8 +137,8 @@ func (s *ExpenseTracker) GetMonthlyReport(ctx context.Context, userID int64) (*B
 			Income:   formatCategoryStats(currentPeriod.IncomeByCategory, prevPeriod.IncomeByCategory),
 		},
 		Trends: Trends{
-			ExpenseTrend:     expenseTrend,
-			IncomeTrend:      incomeTrend,
+			ExpenseTrend: expenseTrend,
+			IncomeTrend:  incomeTrend,
 			PeriodComparison: PeriodComparison{
 				PrevPeriod:    prevPeriod,
 				CurrentPeriod: currentPeriod,
@@ -210,16 +221,6 @@ func (s *ExpenseTracker) GetRecentTransactions(ctx context.Context, userID int64
 func (s *ExpenseTracker) DeleteTransaction(ctx context.Context, transactionID string, userID int64) error {
 	return s.repo.DeleteTransaction(ctx, transactionID, userID)
 }
-
-// Типы отчетов
-type ReportType string
-
-const (
-	DailyReport   ReportType = "daily"
-	WeeklyReport  ReportType = "weekly"
-	MonthlyReport ReportType = "monthly"
-	YearlyReport  ReportType = "yearly"
-)
 
 // BaseReport представляет базовый отчет
 type BaseReport struct {
@@ -325,11 +326,11 @@ func formatCategoryStats(current, previous map[string]float64) []model.CategoryS
 
 	for name, amount := range current {
 		prevAmount := previous[name]
-		share := (amount/total)*100
+		share := (amount / total) * 100
 		stats = append(stats, model.CategoryStats{
-			Name:   name,
-			Amount: amount,
-			Share:  share,
+			Name:         name,
+			Amount:       amount,
+			Share:        share,
 			TrendPercent: calculateTrendPercent(amount, prevAmount),
 		})
 	}
@@ -353,7 +354,7 @@ func calculateTrendPercent(current, previous float64) float64 {
 func analyzePeriod(transactions []model.Transaction, start, end time.Time, categoryNames map[string]string) PeriodStats {
 	stats := PeriodStats{
 		ExpensesByCategory: make(map[string]float64),
-		IncomeByCategory:  make(map[string]float64),
+		IncomeByCategory:   make(map[string]float64),
 	}
 
 	days := end.Sub(start).Hours() / 24
@@ -520,7 +521,7 @@ func (s *ExpenseTracker) fillTransactionStats(report *BaseReport, transactions [
 				stats.MaxIncome = model.TransactionInfo{
 					Amount:      t.Amount,
 					CategoryID:  t.CategoryID,
-					Date:       t.Date,
+					Date:        t.Date,
 					Description: t.Description,
 				}
 			}
@@ -532,7 +533,7 @@ func (s *ExpenseTracker) fillTransactionStats(report *BaseReport, transactions [
 				stats.MaxExpense = model.TransactionInfo{
 					Amount:      expense,
 					CategoryID:  t.CategoryID,
-					Date:       t.Date,
+					Date:        t.Date,
 					Description: t.Description,
 				}
 			}
@@ -564,13 +565,13 @@ func (s *ExpenseTracker) fillCategoryAnalytics(report *BaseReport, currentTransa
 	prevCategoryAmounts := make(map[string]float64)
 	categoryNames := make(map[string]string)
 	categoryTypes := make(map[string]string)
-	
+
 	for _, cat := range categories {
 		categoryNames[cat.ID] = cat.Name
 		categoryTypes[cat.ID] = cat.Type
 		categoryStats[cat.ID] = &model.CategoryStats{
 			CategoryID: cat.ID,
-			Name:      cat.Name,
+			Name:       cat.Name,
 		}
 	}
 
@@ -745,7 +746,7 @@ func (s *ExpenseTracker) findCategoryChanges(changes *model.CategoryChanges, cur
 			changePercent := (change / math.Abs(prevAmount)) * 100
 
 			categoryChange := model.CategoryChange{
-				CategoryID:     catID,
+				CategoryID:    catID,
 				Name:          categoryNames[catID],
 				ChangeValue:   change,
 				ChangePercent: changePercent,
@@ -778,7 +779,7 @@ func (s *ExpenseTracker) formatPeriod(reportType ReportType, start, end time.Tim
 	case DailyReport:
 		return start.Format("02.01.2006")
 	case WeeklyReport:
-		return fmt.Sprintf("%s - %s", 
+		return fmt.Sprintf("%s - %s",
 			start.Format("02.01.2006"),
 			end.Format("02.01.2006"))
 	case MonthlyReport:
@@ -790,4 +791,4 @@ func (s *ExpenseTracker) formatPeriod(reportType ReportType, start, end time.Tim
 			start.Format("02.01.2006"),
 			end.Format("02.01.2006"))
 	}
-} 
+}

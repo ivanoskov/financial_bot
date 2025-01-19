@@ -7,23 +7,24 @@ import (
 	"log"
 	"strconv"
 	"strings"
+
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/ivanoskov/financial_bot/internal/service"
-	"github.com/ivanoskov/financial_bot/internal/model"
 	"github.com/ivanoskov/financial_bot/internal/charts"
+	"github.com/ivanoskov/financial_bot/internal/model"
+	"github.com/ivanoskov/financial_bot/internal/service"
 )
 
 // UserState хранит текущее состояние пользователя
 type UserState struct {
 	SelectedCategoryID string
 	TransactionType    string // "income" или "expense"
-	AwaitingAction    string // "new_category" или пусто
+	AwaitingAction     string // "new_category" или пусто
 }
 
 type Bot struct {
-	api     *tgbotapi.BotAPI
-	service *service.ExpenseTracker
-	states  map[int64]*UserState // состояния пользователей по их ID
+	api      *tgbotapi.BotAPI
+	service  *service.ExpenseTracker
+	states   map[int64]*UserState // состояния пользователей по их ID
 	chartGen *charts.ChartGenerator
 }
 
@@ -34,9 +35,9 @@ func NewBot(token string, service *service.ExpenseTracker) (*Bot, error) {
 	}
 
 	return &Bot{
-		api:     bot,
-		service: service,
-		states:  make(map[int64]*UserState),
+		api:      bot,
+		service:  service,
+		states:   make(map[int64]*UserState),
 		chartGen: charts.NewChartGenerator(),
 	}, nil
 }
@@ -90,7 +91,7 @@ func (b *Bot) HandleWebhook(body []byte) error {
 
 func (b *Bot) handleCommand(message *tgbotapi.Message) error {
 	cmd := message.Command()
-	
+
 	switch cmd {
 	case "start":
 		b.handleStart(message)
@@ -121,7 +122,7 @@ func (b *Bot) handleStart(message *tgbotapi.Message) {
 			"• Показывать отчеты по категориям\n"+
 			"• Управлять категориями\n\n"+
 			"*Выберите нужное действие в меню ниже* 👇")
-	
+
 	msg.ParseMode = "Markdown"
 	msg.ReplyMarkup = keyboard
 	b.api.Send(msg)
@@ -207,7 +208,7 @@ func (b *Bot) handleCallback(callback *tgbotapi.CallbackQuery) error {
 		})
 	case strings.HasPrefix(callback.Data, "category_"):
 		categoryID := strings.TrimPrefix(callback.Data, "category_")
-		
+
 		// Получаем категорию для определения типа транзакции
 		categories, err := b.service.GetCategories(context.Background(), callback.From.ID)
 		if err != nil {
@@ -229,8 +230,8 @@ func (b *Bot) handleCallback(callback *tgbotapi.CallbackQuery) error {
 			SelectedCategoryID: categoryID,
 			TransactionType:    transactionType,
 		}
-		
-		msg = tgbotapi.NewMessage(callback.Message.Chat.ID, 
+
+		msg = tgbotapi.NewMessage(callback.Message.Chat.ID,
 			fmt.Sprintf("*Категория:* %s\n\n"+
 				"Введите сумму и описание в формате:\n"+
 				"`1000 Покупка продуктов`", categoryName))
@@ -317,7 +318,7 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) error {
 		description = parts[1]
 	}
 
-	err = b.service.AddTransaction(context.Background(), 
+	err = b.service.AddTransaction(context.Background(),
 		message.From.ID,
 		state.SelectedCategoryID,
 		amount,
@@ -357,13 +358,13 @@ func (b *Bot) handleReport(message *tgbotapi.Message) {
 		),
 	)
 
-	msg := tgbotapi.NewMessage(message.Chat.ID, 
+	msg := tgbotapi.NewMessage(message.Chat.ID,
 		"*Выберите период для отчета:*\n\n"+
-		"• За день - детальный анализ расходов за текущий день\n"+
-		"• За неделю - анализ трендов за последние 7 дней\n"+
-		"• За месяц - полный анализ за текущий месяц\n"+
-		"• За год - годовая статистика и тренды\n"+
-		"• Графики - визуальный анализ ваших финансов")
+			"• За день - детальный анализ расходов за текущий день\n"+
+			"• За неделю - анализ трендов за последние 7 дней\n"+
+			"• За месяц - полный анализ за текущий месяц\n"+
+			"• За год - годовая статистика и тренды\n"+
+			"• Графики - визуальный анализ ваших финансов")
 	msg.ParseMode = "Markdown"
 	msg.ReplyMarkup = keyboard
 	b.api.Send(msg)
@@ -430,7 +431,7 @@ func (b *Bot) handleAddExpense(message *tgbotapi.Message) {
 	}
 
 	if len(expenseCategories) == 0 {
-		msg := tgbotapi.NewMessage(message.Chat.ID, 
+		msg := tgbotapi.NewMessage(message.Chat.ID,
 			"*У вас нет категорий расходов*\n\nСначала создайте хотя бы одну категорию:")
 		msg.ParseMode = "Markdown"
 		msg.ReplyMarkup = b.getCategoriesKeyboard(categories)
@@ -460,7 +461,7 @@ func (b *Bot) handleAddIncome(message *tgbotapi.Message) {
 	}
 
 	if len(incomeCategories) == 0 {
-		msg := tgbotapi.NewMessage(message.Chat.ID, 
+		msg := tgbotapi.NewMessage(message.Chat.ID,
 			"*У вас нет категорий доходов*\n\nСначала создайте хотя бы одну категорию:")
 		msg.ParseMode = "Markdown"
 		msg.ReplyMarkup = b.getCategoriesKeyboard(categories)
@@ -478,7 +479,7 @@ func (b *Bot) handleAddIncome(message *tgbotapi.Message) {
 func (b *Bot) handleAddIncomeCategory(message *tgbotapi.Message) {
 	b.states[message.From.ID] = &UserState{
 		TransactionType: "income",
-		AwaitingAction: "new_category",
+		AwaitingAction:  "new_category",
 	}
 	msg := tgbotapi.NewMessage(message.Chat.ID, "*Новая категория дохода*\n\nВведите название:")
 	msg.ParseMode = "Markdown"
@@ -488,7 +489,7 @@ func (b *Bot) handleAddIncomeCategory(message *tgbotapi.Message) {
 func (b *Bot) handleAddExpenseCategory(message *tgbotapi.Message) {
 	b.states[message.From.ID] = &UserState{
 		TransactionType: "expense",
-		AwaitingAction: "new_category",
+		AwaitingAction:  "new_category",
 	}
 	msg := tgbotapi.NewMessage(message.Chat.ID, "*Новая категория расхода*\n\nВведите название:")
 	msg.ParseMode = "Markdown"
@@ -535,7 +536,7 @@ func (b *Bot) handleTransactions(message *tgbotapi.Message) {
 			amountStr = fmt.Sprintf("%.2f₽", t.Amount)
 		}
 
-		text += fmt.Sprintf("%s *%s*: %s _%s_\n", 
+		text += fmt.Sprintf("%s *%s*: %s _%s_\n",
 			emoji, categoryName, amountStr, t.Description)
 
 		buttons = append(buttons, []tgbotapi.InlineKeyboardButton{
@@ -569,7 +570,7 @@ func (b *Bot) sendReport(chatID int64, userID int64, reportType service.ReportTy
 
 	// Основные показатели
 	text += "*Основные показатели:*\n"
-	text += fmt.Sprintf("💰 Доходы: %.2f₽", report.TotalIncome)
+	text += fmt.Sprintf("💰 Доходы: *%.0f₽*", report.TotalIncome)
 	if report.Trends.PeriodComparison.IncomeChange != 0 {
 		if report.Trends.PeriodComparison.IncomeChange > 0 {
 			text += fmt.Sprintf(" (+%.1f%%⬆️)", report.Trends.PeriodComparison.IncomeChange)
@@ -579,7 +580,7 @@ func (b *Bot) sendReport(chatID int64, userID int64, reportType service.ReportTy
 	}
 	text += "\n"
 
-	text += fmt.Sprintf("💸 Расходы: %.2f₽", report.TotalExpenses)
+	text += fmt.Sprintf("💸 Расходы: *%.0f₽*", report.TotalExpenses)
 	if report.Trends.PeriodComparison.ExpenseChange != 0 {
 		if report.Trends.PeriodComparison.ExpenseChange > 0 {
 			text += fmt.Sprintf(" (+%.1f%%⬆️)", report.Trends.PeriodComparison.ExpenseChange)
@@ -589,7 +590,7 @@ func (b *Bot) sendReport(chatID int64, userID int64, reportType service.ReportTy
 	}
 	text += "\n"
 
-	text += fmt.Sprintf("💵 Баланс: %.2f₽", report.Balance)
+	text += fmt.Sprintf("💵 Баланс: *%.0f₽*", report.Balance)
 	if report.Trends.PeriodComparison.BalanceChange != 0 {
 		if report.Trends.PeriodComparison.BalanceChange > 0 {
 			text += fmt.Sprintf(" (+%.1f%%⬆️)", report.Trends.PeriodComparison.BalanceChange)
@@ -601,24 +602,24 @@ func (b *Bot) sendReport(chatID int64, userID int64, reportType service.ReportTy
 
 	// Статистика транзакций
 	text += "*Статистика транзакций:*\n"
-	text += fmt.Sprintf("• Всего: %d (💰 %d, 💸 %d)\n",
+	text += fmt.Sprintf("• Всего: *%.0f* (💰 *%d*, 💸 *%d*)\n",
 		report.TransactionData.TotalCount,
 		report.TransactionData.IncomeCount,
 		report.TransactionData.ExpenseCount)
-	text += fmt.Sprintf("• Средний доход: %.2f₽\n", report.TransactionData.AvgIncome)
-	text += fmt.Sprintf("• Средний расход: %.2f₽\n", report.TransactionData.AvgExpense)
-	text += fmt.Sprintf("• В день (доходы): %.2f₽\n", report.TransactionData.DailyAvgIncome)
-	text += fmt.Sprintf("• В день (расходы): %.2f₽\n\n", report.TransactionData.DailyAvgExpense)
+	text += fmt.Sprintf("• Средний доход: *%.0f₽*\n", report.TransactionData.AvgIncome)
+	text += fmt.Sprintf("• Средний расход: *%.0f₽*\n", report.TransactionData.AvgExpense)
+	text += fmt.Sprintf("• В день (доходы): *%.0f₽*\n", report.TransactionData.DailyAvgIncome)
+	text += fmt.Sprintf("• В день (расходы): *%.0f₽*\n\n", report.TransactionData.DailyAvgExpense)
 
 	// Максимальные транзакции
 	text += "*Крупнейшие транзакции:*\n"
 	if report.TransactionData.MaxIncome.Amount > 0 {
-		text += fmt.Sprintf("💰 +%.2f₽: %s\n",
+		text += fmt.Sprintf("💰 +*%.0f₽*: %s\n",
 			report.TransactionData.MaxIncome.Amount,
 			report.TransactionData.MaxIncome.Description)
 	}
 	if report.TransactionData.MaxExpense.Amount > 0 {
-		text += fmt.Sprintf("💸 -%.2f₽: %s\n\n",
+		text += fmt.Sprintf("💸 -*%.0f₽*: %s\n\n",
 			report.TransactionData.MaxExpense.Amount,
 			report.TransactionData.MaxExpense.Description)
 	}
@@ -627,7 +628,7 @@ func (b *Bot) sendReport(chatID int64, userID int64, reportType service.ReportTy
 	if len(report.CategoryData.Expenses) > 0 {
 		text += "*Топ категорий расходов:*\n"
 		for _, cat := range report.CategoryData.Expenses {
-			text += fmt.Sprintf("• %s: %.2f₽ (%.1f%%)", 
+			text += fmt.Sprintf("• *%s*: *%.0f₽* (%.1f%%)",
 				cat.Name, cat.Amount, cat.Share)
 			if cat.TrendPercent != 0 {
 				if cat.TrendPercent > 0 {
@@ -645,7 +646,7 @@ func (b *Bot) sendReport(chatID int64, userID int64, reportType service.ReportTy
 	if len(report.CategoryData.Income) > 0 {
 		text += "*Топ категорий доходов:*\n"
 		for _, cat := range report.CategoryData.Income {
-			text += fmt.Sprintf("• %s: %.2f₽ (%.1f%%)", 
+			text += fmt.Sprintf("• *%s*: *%.0f₽* (%.1f%%)",
 				cat.Name, cat.Amount, cat.Share)
 			if cat.TrendPercent != 0 {
 				if cat.TrendPercent > 0 {
@@ -662,22 +663,22 @@ func (b *Bot) sendReport(chatID int64, userID int64, reportType service.ReportTy
 	// Значительные изменения
 	text += "*Значительные изменения:*\n"
 	if report.CategoryData.Changes.FastestGrowingExpense.Name != "" {
-		text += fmt.Sprintf("📈 Быстрее всего растут расходы в категории '%s': %.1f%%\n",
+		text += fmt.Sprintf("📈 *Быстрее всего растут расходы в категории '%s': %.1f%%*\n",
 			report.CategoryData.Changes.FastestGrowingExpense.Name,
 			report.CategoryData.Changes.FastestGrowingExpense.ChangePercent)
 	}
 	if report.CategoryData.Changes.LargestDropExpense.Name != "" {
-		text += fmt.Sprintf("📉 Сильнее всего снизились расходы в '%s': %.1f%%\n",
+		text += fmt.Sprintf("📉 *Сильнее всего снизились расходы в '%s': %.1f%%*\n",
 			report.CategoryData.Changes.LargestDropExpense.Name,
 			report.CategoryData.Changes.LargestDropExpense.ChangePercent)
 	}
 	if report.CategoryData.Changes.FastestGrowingIncome.Name != "" {
-		text += fmt.Sprintf("📈 Быстрее всего растут доходы в '%s': %.1f%%\n",
+		text += fmt.Sprintf("📈 *Быстрее всего растут доходы в '%s': %.1f%%*\n",
 			report.CategoryData.Changes.FastestGrowingIncome.Name,
 			report.CategoryData.Changes.FastestGrowingIncome.ChangePercent)
 	}
 	if report.CategoryData.Changes.LargestDropIncome.Name != "" {
-		text += fmt.Sprintf("📉 Сильнее всего снизились доходы в '%s': %.1f%%\n",
+		text += fmt.Sprintf("📉 *Сильнее всего снизились доходы в '%s': %.1f%%*\n",
 			report.CategoryData.Changes.LargestDropIncome.Name,
 			report.CategoryData.Changes.LargestDropIncome.ChangePercent)
 	}
@@ -686,7 +687,7 @@ func (b *Bot) sendReport(chatID int64, userID int64, reportType service.ReportTy
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📊 Графики", "report_charts"),
-			tgbotapi.NewInlineKeyboardButtonData("« Назад", "action_back"),
+			tgbotapi.NewInlineKeyboardButtonData("« В меню", "action_back"),
 		),
 	)
 
@@ -734,35 +735,35 @@ func (b *Bot) sendCharts(ctx context.Context, chatID int64, report *service.Base
 
 	// Собираем все графики в одно сообщение
 	var media []interface{}
-	
+
 	if len(dashboardData) > 0 {
 		media = append(media, tgbotapi.NewInputMediaPhoto(tgbotapi.FileBytes{
 			Name:  "1_dashboard.png",
 			Bytes: dashboardData,
 		}))
 	}
-	
+
 	if len(expenseCategoriesData) > 0 {
 		media = append(media, tgbotapi.NewInputMediaPhoto(tgbotapi.FileBytes{
 			Name:  "2_expenses.png",
 			Bytes: expenseCategoriesData,
 		}))
 	}
-	
+
 	if len(incomeCategoriesData) > 0 {
 		media = append(media, tgbotapi.NewInputMediaPhoto(tgbotapi.FileBytes{
 			Name:  "3_income.png",
 			Bytes: incomeCategoriesData,
 		}))
 	}
-	
+
 	if len(trendsData) > 0 {
 		media = append(media, tgbotapi.NewInputMediaPhoto(tgbotapi.FileBytes{
 			Name:  "4_trends.png",
 			Bytes: trendsData,
 		}))
 	}
-	
+
 	if len(balanceData) > 0 {
 		media = append(media, tgbotapi.NewInputMediaPhoto(tgbotapi.FileBytes{
 			Name:  "5_balance.png",
@@ -812,4 +813,57 @@ func (b *Bot) sendCharts(ctx context.Context, chatID int64, report *service.Base
 func (b *Bot) sendErrorMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, "❌ "+text)
 	b.api.Send(msg)
-} 
+}
+
+// SendDailyReport отправляет ежедневный отчет пользователю
+func (b *Bot) SendDailyReport(ctx context.Context, userID int64, report *service.BaseReport) error {
+	// Формируем текст отчета
+	text := "*Ваша финансовая сводка за прошедший день:*\n\n"
+
+	// Основные показатели
+	text += "*Основные показатели:*\n"
+	text += fmt.Sprintf("💰 Доходы: %.2f₽", report.TotalIncome)
+	if report.Trends.PeriodComparison.IncomeChange != 0 {
+		if report.Trends.PeriodComparison.IncomeChange > 0 {
+			text += fmt.Sprintf(" (+%.1f%%⬆️)", report.Trends.PeriodComparison.IncomeChange)
+		} else {
+			text += fmt.Sprintf(" (%.1f%%⬇️)", report.Trends.PeriodComparison.IncomeChange)
+		}
+	}
+	text += "\n"
+
+	text += fmt.Sprintf("💸 Расходы: %.2f₽", report.TotalExpenses)
+	if report.Trends.PeriodComparison.ExpenseChange != 0 {
+		if report.Trends.PeriodComparison.ExpenseChange > 0 {
+			text += fmt.Sprintf(" (+%.1f%%⬆️)", report.Trends.PeriodComparison.ExpenseChange)
+		} else {
+			text += fmt.Sprintf(" (%.1f%%⬇️)", report.Trends.PeriodComparison.ExpenseChange)
+		}
+	}
+	text += "\n"
+
+	text += fmt.Sprintf("💵 Баланс: %.2f₽", report.Balance)
+	if report.Trends.PeriodComparison.BalanceChange != 0 {
+		if report.Trends.PeriodComparison.BalanceChange > 0 {
+			text += fmt.Sprintf(" (+%.1f%%⬆️)", report.Trends.PeriodComparison.BalanceChange)
+		} else {
+			text += fmt.Sprintf(" (%.1f%%⬇️)", report.Trends.PeriodComparison.BalanceChange)
+		}
+	}
+	text += "\n\n"
+
+	// Добавляем кнопки
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📊 Подробный отчет", "report_daily"),
+			tgbotapi.NewInlineKeyboardButtonData("📈 Графики", "report_charts"),
+		),
+	)
+
+	msg := tgbotapi.NewMessage(userID, text)
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = keyboard
+	_, err := b.api.Send(msg)
+
+	return err
+}

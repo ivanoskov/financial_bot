@@ -186,4 +186,40 @@ func (r *SupabaseRepository) DeleteCategory(ctx context.Context, id string, user
 	return nil
 }
 
+// GetAllUsers возвращает список ID всех пользователей
+func (r *SupabaseRepository) GetAllUsers(ctx context.Context) ([]int64, error) {
+	// Получаем уникальные user_id из таблицы transactions
+	query := r.client.From("transactions").
+		Select("user_id", "", false).
+		Not("user_id", "is", "null")
+
+	var data []byte
+	var err error
+	if data, _, err = query.Execute(); err != nil {
+		return nil, fmt.Errorf("failed to get users: %w", err)
+	}
+
+	// Парсим результат
+	var result []struct {
+		UserID int64 `json:"user_id"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse users: %w", err)
+	}
+
+	// Создаем map для уникальности
+	usersMap := make(map[int64]bool)
+	for _, r := range result {
+		usersMap[r.UserID] = true
+	}
+
+	// Преобразуем map в slice
+	users := make([]int64, 0, len(usersMap))
+	for userID := range usersMap {
+		users = append(users, userID)
+	}
+
+	return users, nil
+}
+
 // Реализация остальных методов репозитория... 
