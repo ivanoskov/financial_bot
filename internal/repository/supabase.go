@@ -9,6 +9,7 @@ import (
 	"github.com/supabase-community/supabase-go"
 	"github.com/ivanoskov/financial_bot/internal/model"
 	"time"
+	"log"
 )
 
 type SupabaseRepository struct {
@@ -85,9 +86,7 @@ func (r *SupabaseRepository) CreateTransaction(ctx context.Context, transaction 
 	return nil
 }
 
-func (r *SupabaseRepository) GetTransactions(ctx context.Context, userID int64, filter TransactionFilter) ([]model.Transaction, error) {
-	fmt.Printf("Getting transactions for user %d with filter %+v\n", userID, filter)
-	var transactions []model.Transaction
+func (r *SupabaseRepository) GetTransactions(ctx context.Context, userID int64, filter model.TransactionFilter) ([]model.Transaction, error) {
 	query := r.client.From("transactions").
 		Select("*", "", false).
 		Eq("user_id", strconv.FormatInt(userID, 10))
@@ -98,24 +97,23 @@ func (r *SupabaseRepository) GetTransactions(ctx context.Context, userID int64, 
 	if filter.EndDate != nil {
 		query = query.Lte("date", filter.EndDate.Format(time.RFC3339))
 	}
-
-	// Добавляем сортировку по дате (сначала новые)
-	query = query.Order("created_at", nil)
-
-	// Если указан лимит, добавляем его
 	if filter.Limit > 0 {
 		query = query.Limit(filter.Limit, "")
 	}
 
+	// Добавляем сортировку по дате (сначала новые)
+	query = query.Order("created_at", nil)
+
 	data, count, err := query.Execute()
 	if err != nil {
-		fmt.Printf("Error getting transactions: %v\n", err)
+		log.Printf("Error getting transactions: %v", err)
 		return nil, fmt.Errorf("failed to get transactions: %w", err)
 	}
-	fmt.Printf("Got %d transactions. Response data: %s\n", count, string(data))
+	log.Printf("Got %d transactions. Response data: %s", count, string(data))
 
+	var transactions []model.Transaction
 	if err := json.Unmarshal(data, &transactions); err != nil {
-		fmt.Printf("Error parsing transactions: %v\n", err)
+		log.Printf("Error parsing transactions: %v", err)
 		return nil, fmt.Errorf("failed to parse transactions: %w", err)
 	}
 

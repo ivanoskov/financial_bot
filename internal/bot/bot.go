@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/ivanoskov/financial_bot/internal/service"
 	"github.com/ivanoskov/financial_bot/internal/model"
+	"github.com/ivanoskov/financial_bot/internal/charts"
 )
 
 // UserState хранит текущее состояние пользователя
@@ -22,6 +24,7 @@ type Bot struct {
 	api     *tgbotapi.BotAPI
 	service *service.ExpenseTracker
 	states  map[int64]*UserState // состояния пользователей по их ID
+	chartGen *charts.ChartGenerator
 }
 
 func NewBot(token string, service *service.ExpenseTracker) (*Bot, error) {
@@ -34,6 +37,7 @@ func NewBot(token string, service *service.ExpenseTracker) (*Bot, error) {
 		api:     bot,
 		service: service,
 		states:  make(map[int64]*UserState),
+		chartGen: charts.NewChartGenerator(),
 	}, nil
 }
 
@@ -232,6 +236,27 @@ func (b *Bot) handleCallback(callback *tgbotapi.CallbackQuery) error {
 				"`1000 Покупка продуктов`", categoryName))
 		msg.ParseMode = "Markdown"
 		b.api.Send(msg)
+	case callback.Data == "report_daily":
+		b.sendReport(callback.Message.Chat.ID, callback.From.ID, service.DailyReport)
+	case callback.Data == "report_weekly":
+		b.sendReport(callback.Message.Chat.ID, callback.From.ID, service.WeeklyReport)
+	case callback.Data == "report_monthly":
+		b.sendReport(callback.Message.Chat.ID, callback.From.ID, service.MonthlyReport)
+	case callback.Data == "report_yearly":
+		b.sendReport(callback.Message.Chat.ID, callback.From.ID, service.YearlyReport)
+	case callback.Data == "report_charts":
+		// Получаем отчет для графиков
+		report, err := b.service.GetReport(context.Background(), callback.From.ID, service.MonthlyReport)
+		if err != nil {
+			b.sendErrorMessage(callback.Message.Chat.ID, "Не удалось сформировать отчет для графиков")
+			return nil
+		}
+		msg := tgbotapi.NewMessage(callback.Message.Chat.ID, "📊 Графический анализ...")
+		b.api.Send(msg)
+		err = b.sendCharts(context.Background(), callback.Message.Chat.ID, report)
+		if err != nil {
+			b.sendErrorMessage(callback.Message.Chat.ID, fmt.Sprintf("Не удалось сгенерировать графики: %v", err))
+		}
 	}
 
 	// Отвечаем на callback, чтобы убрать loading indicator
@@ -275,11 +300,6 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) error {
 
 	// Обработка ввода суммы и описания транзакции
 	parts := strings.SplitN(message.Text, " ", 2)
-	if len(parts) != 2 {
-		b.sendErrorMessage(message.Chat.ID, "Неверный формат. Используйте: <сумма> <описание>")
-		return nil
-	}
-
 	amount, err := strconv.ParseFloat(parts[0], 64)
 	if err != nil {
 		b.sendErrorMessage(message.Chat.ID, "Неверный формат суммы. Используйте число, например: 1000.50")
@@ -291,11 +311,17 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) error {
 		amount = -amount
 	}
 
+	// Получаем описание, если оно есть
+	description := ""
+	if len(parts) > 1 {
+		description = parts[1]
+	}
+
 	err = b.service.AddTransaction(context.Background(), 
 		message.From.ID,
 		state.SelectedCategoryID,
 		amount,
-		parts[1])
+		description)
 
 	if err != nil {
 		b.sendErrorMessage(message.Chat.ID, fmt.Sprintf("Ошибка при сохранении транзакции: %v", err))
@@ -314,79 +340,32 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) error {
 }
 
 func (b *Bot) handleReport(message *tgbotapi.Message) {
-	report, err := b.service.GetMonthlyReport(context.Background(), message.From.ID)
-	if err != nil {
-		b.sendErrorMessage(message.Chat.ID, "Не удалось сформировать отчет")
-		return
-	}
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📊 За день", "report_daily"),
+			tgbotapi.NewInlineKeyboardButtonData("📈 За неделю", "report_weekly"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📋 За месяц", "report_monthly"),
+			tgbotapi.NewInlineKeyboardButtonData("📅 За год", "report_yearly"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📊 Графики", "report_charts"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("« Назад", "action_back"),
+		),
+	)
 
-	text := fmt.Sprintf(
-		"📊 *Отчет за %s*\n\n"+
-			"💰 *Доходы:* %.2f₽ ", report.Period, report.TotalIncome)
-	
-	// Добавляем изменение доходов
-	if report.IncomeChange != 0 {
-		if report.IncomeChange > 0 {
-			text += fmt.Sprintf("(+%.1f%%⬆️)", report.IncomeChange)
-		} else {
-			text += fmt.Sprintf("(%.1f%%⬇️)", report.IncomeChange)
-		}
-	}
-
-	text += fmt.Sprintf("\n💸 *Расходы:* %.2f₽ ", report.TotalExpenses)
-	
-	// Добавляем изменение расходов
-	if report.ExpensesChange != 0 {
-		if report.ExpensesChange > 0 {
-			text += fmt.Sprintf("(+%.1f%%⬆️)", report.ExpensesChange)
-		} else {
-			text += fmt.Sprintf("(%.1f%%⬇️)", report.ExpensesChange)
-		}
-	}
-
-	// Баланс
-	text += fmt.Sprintf("\n💵 *Баланс:* %.2f₽\n", report.Balance)
-
-	// Средние значения
-	text += fmt.Sprintf("\n📈 *Средние показатели:*\n"+
-		"• В день: %.2f₽\n"+
-		"• Средняя транзакция: %.2f₽\n"+
-		"• Всего транзакций: %d\n",
-		report.AvgDailyExpense,
-		report.AvgTransAmount,
-		report.TransactionsCount)
-
-	// Топ категорий расходов
-	if len(report.TopExpenseCategories) > 0 {
-		text += "\n💸 *Топ расходов:*\n"
-		for _, cat := range report.TopExpenseCategories {
-			text += fmt.Sprintf("• %s: %.2f₽ (%.1f%%)\n",
-				cat.Name, cat.Amount, cat.Share)
-		}
-	}
-
-	// Топ категорий доходов
-	if len(report.TopIncomeCategories) > 0 {
-		text += "\n💰 *Топ доходов:*\n"
-		for _, cat := range report.TopIncomeCategories {
-			text += fmt.Sprintf("• %s: %.2f₽ (%.1f%%)\n",
-				cat.Name, cat.Amount, cat.Share)
-		}
-	}
-
-	// Добавляем сравнение с прошлым месяцем
-	text += "\n📅 *Сравнение с прошлым месяцем:*\n"
-	if report.PrevMonthIncome > 0 || report.PrevMonthExpenses > 0 {
-		text += fmt.Sprintf("• Доходы: %.2f₽ → %.2f₽\n"+
-			"• Расходы: %.2f₽ → %.2f₽\n",
-			report.PrevMonthIncome, report.TotalIncome,
-			report.PrevMonthExpenses, report.TotalExpenses)
-	} else {
-		text += "Нет данных за прошлый месяц"
-	}
-
-	msg := tgbotapi.NewMessage(message.Chat.ID, text)
+	msg := tgbotapi.NewMessage(message.Chat.ID, 
+		"*Выберите период для отчета:*\n\n"+
+		"• За день - детальный анализ расходов за текущий день\n"+
+		"• За неделю - анализ трендов за последние 7 дней\n"+
+		"• За месяц - полный анализ за текущий месяц\n"+
+		"• За год - годовая статистика и тренды\n"+
+		"• Графики - визуальный анализ ваших финансов")
 	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = keyboard
 	b.api.Send(msg)
 }
 
@@ -576,6 +555,258 @@ func (b *Bot) handleTransactions(message *tgbotapi.Message) {
 	msg.ParseMode = "Markdown"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(buttons...)
 	b.api.Send(msg)
+}
+
+func (b *Bot) sendReport(chatID int64, userID int64, reportType service.ReportType) {
+	report, err := b.service.GetReport(context.Background(), userID, reportType)
+	if err != nil {
+		b.sendErrorMessage(chatID, "Не удалось сформировать отчет")
+		return
+	}
+
+	// Формируем текст отчета
+	text := fmt.Sprintf("📊 *Отчет за %s*\n\n", report.Period)
+
+	// Основные показатели
+	text += "*Основные показатели:*\n"
+	text += fmt.Sprintf("💰 Доходы: %.2f₽", report.TotalIncome)
+	if report.Trends.PeriodComparison.IncomeChange != 0 {
+		if report.Trends.PeriodComparison.IncomeChange > 0 {
+			text += fmt.Sprintf(" (+%.1f%%⬆️)", report.Trends.PeriodComparison.IncomeChange)
+		} else {
+			text += fmt.Sprintf(" (%.1f%%⬇️)", report.Trends.PeriodComparison.IncomeChange)
+		}
+	}
+	text += "\n"
+
+	text += fmt.Sprintf("💸 Расходы: %.2f₽", report.TotalExpenses)
+	if report.Trends.PeriodComparison.ExpenseChange != 0 {
+		if report.Trends.PeriodComparison.ExpenseChange > 0 {
+			text += fmt.Sprintf(" (+%.1f%%⬆️)", report.Trends.PeriodComparison.ExpenseChange)
+		} else {
+			text += fmt.Sprintf(" (%.1f%%⬇️)", report.Trends.PeriodComparison.ExpenseChange)
+		}
+	}
+	text += "\n"
+
+	text += fmt.Sprintf("💵 Баланс: %.2f₽", report.Balance)
+	if report.Trends.PeriodComparison.BalanceChange != 0 {
+		if report.Trends.PeriodComparison.BalanceChange > 0 {
+			text += fmt.Sprintf(" (+%.1f%%⬆️)", report.Trends.PeriodComparison.BalanceChange)
+		} else {
+			text += fmt.Sprintf(" (%.1f%%⬇️)", report.Trends.PeriodComparison.BalanceChange)
+		}
+	}
+	text += "\n\n"
+
+	// Статистика транзакций
+	text += "*Статистика транзакций:*\n"
+	text += fmt.Sprintf("• Всего: %d (💰 %d, 💸 %d)\n",
+		report.TransactionData.TotalCount,
+		report.TransactionData.IncomeCount,
+		report.TransactionData.ExpenseCount)
+	text += fmt.Sprintf("• Средний доход: %.2f₽\n", report.TransactionData.AvgIncome)
+	text += fmt.Sprintf("• Средний расход: %.2f₽\n", report.TransactionData.AvgExpense)
+	text += fmt.Sprintf("• В день (доходы): %.2f₽\n", report.TransactionData.DailyAvgIncome)
+	text += fmt.Sprintf("• В день (расходы): %.2f₽\n\n", report.TransactionData.DailyAvgExpense)
+
+	// Максимальные транзакции
+	text += "*Крупнейшие транзакции:*\n"
+	if report.TransactionData.MaxIncome.Amount > 0 {
+		text += fmt.Sprintf("💰 +%.2f₽: %s\n",
+			report.TransactionData.MaxIncome.Amount,
+			report.TransactionData.MaxIncome.Description)
+	}
+	if report.TransactionData.MaxExpense.Amount > 0 {
+		text += fmt.Sprintf("💸 -%.2f₽: %s\n\n",
+			report.TransactionData.MaxExpense.Amount,
+			report.TransactionData.MaxExpense.Description)
+	}
+
+	// Категории расходов
+	if len(report.CategoryData.Expenses) > 0 {
+		text += "*Топ категорий расходов:*\n"
+		for _, cat := range report.CategoryData.Expenses {
+			text += fmt.Sprintf("• %s: %.2f₽ (%.1f%%)", 
+				cat.Name, cat.Amount, cat.Share)
+			if cat.TrendPercent != 0 {
+				if cat.TrendPercent > 0 {
+					text += fmt.Sprintf(" (+%.1f%%⬆️)", cat.TrendPercent)
+				} else {
+					text += fmt.Sprintf(" (%.1f%%⬇️)", cat.TrendPercent)
+				}
+			}
+			text += "\n"
+		}
+		text += "\n"
+	}
+
+	// Категории доходов
+	if len(report.CategoryData.Income) > 0 {
+		text += "*Топ категорий доходов:*\n"
+		for _, cat := range report.CategoryData.Income {
+			text += fmt.Sprintf("• %s: %.2f₽ (%.1f%%)", 
+				cat.Name, cat.Amount, cat.Share)
+			if cat.TrendPercent != 0 {
+				if cat.TrendPercent > 0 {
+					text += fmt.Sprintf(" (+%.1f%%⬆️)", cat.TrendPercent)
+				} else {
+					text += fmt.Sprintf(" (%.1f%%⬇️)", cat.TrendPercent)
+				}
+			}
+			text += "\n"
+		}
+		text += "\n"
+	}
+
+	// Значительные изменения
+	text += "*Значительные изменения:*\n"
+	if report.CategoryData.Changes.FastestGrowingExpense.Name != "" {
+		text += fmt.Sprintf("📈 Быстрее всего растут расходы в категории '%s': %.1f%%\n",
+			report.CategoryData.Changes.FastestGrowingExpense.Name,
+			report.CategoryData.Changes.FastestGrowingExpense.ChangePercent)
+	}
+	if report.CategoryData.Changes.LargestDropExpense.Name != "" {
+		text += fmt.Sprintf("📉 Сильнее всего снизились расходы в '%s': %.1f%%\n",
+			report.CategoryData.Changes.LargestDropExpense.Name,
+			report.CategoryData.Changes.LargestDropExpense.ChangePercent)
+	}
+	if report.CategoryData.Changes.FastestGrowingIncome.Name != "" {
+		text += fmt.Sprintf("📈 Быстрее всего растут доходы в '%s': %.1f%%\n",
+			report.CategoryData.Changes.FastestGrowingIncome.Name,
+			report.CategoryData.Changes.FastestGrowingIncome.ChangePercent)
+	}
+	if report.CategoryData.Changes.LargestDropIncome.Name != "" {
+		text += fmt.Sprintf("📉 Сильнее всего снизились доходы в '%s': %.1f%%\n",
+			report.CategoryData.Changes.LargestDropIncome.Name,
+			report.CategoryData.Changes.LargestDropIncome.ChangePercent)
+	}
+
+	// Добавляем кнопки
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📊 Графики", "report_charts"),
+			tgbotapi.NewInlineKeyboardButtonData("« Назад", "action_back"),
+		),
+	)
+
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = keyboard
+	b.api.Send(msg)
+}
+
+func (b *Bot) sendCharts(ctx context.Context, chatID int64, report *service.BaseReport) error {
+	// Отправляем сообщение о начале генерации
+	msg := tgbotapi.NewMessage(chatID, "📊 Генерация графиков...")
+	b.api.Send(msg)
+
+	// Генерируем все графики
+	log.Printf("Generating financial dashboard...")
+	dashboardData, err := b.chartGen.GenerateFinancialDashboard(report)
+	if err != nil {
+		return fmt.Errorf("failed to generate financial dashboard: %w", err)
+	}
+
+	log.Printf("Generating expense categories analysis...")
+	expenseCategoriesData, err := b.chartGen.GenerateCategoryPieChart(report, true)
+	if err != nil {
+		return fmt.Errorf("failed to generate expense categories chart: %w", err)
+	}
+
+	log.Printf("Generating income categories analysis...")
+	incomeCategoriesData, err := b.chartGen.GenerateCategoryPieChart(report, false)
+	if err != nil {
+		return fmt.Errorf("failed to generate income categories chart: %w", err)
+	}
+
+	log.Printf("Generating trends chart...")
+	trendsData, err := b.chartGen.GenerateTrendChart(report)
+	if err != nil {
+		return fmt.Errorf("failed to generate trends chart: %w", err)
+	}
+
+	log.Printf("Generating balance chart...")
+	balanceData, err := b.chartGen.GenerateBalanceChart(report)
+	if err != nil {
+		return fmt.Errorf("failed to generate balance chart: %w", err)
+	}
+
+	// Собираем все графики в одно сообщение
+	var media []interface{}
+	
+	if len(dashboardData) > 0 {
+		media = append(media, tgbotapi.NewInputMediaPhoto(tgbotapi.FileBytes{
+			Name:  "1_dashboard.png",
+			Bytes: dashboardData,
+		}))
+	}
+	
+	if len(expenseCategoriesData) > 0 {
+		media = append(media, tgbotapi.NewInputMediaPhoto(tgbotapi.FileBytes{
+			Name:  "2_expenses.png",
+			Bytes: expenseCategoriesData,
+		}))
+	}
+	
+	if len(incomeCategoriesData) > 0 {
+		media = append(media, tgbotapi.NewInputMediaPhoto(tgbotapi.FileBytes{
+			Name:  "3_income.png",
+			Bytes: incomeCategoriesData,
+		}))
+	}
+	
+	if len(trendsData) > 0 {
+		media = append(media, tgbotapi.NewInputMediaPhoto(tgbotapi.FileBytes{
+			Name:  "4_trends.png",
+			Bytes: trendsData,
+		}))
+	}
+	
+	if len(balanceData) > 0 {
+		media = append(media, tgbotapi.NewInputMediaPhoto(tgbotapi.FileBytes{
+			Name:  "5_balance.png",
+			Bytes: balanceData,
+		}))
+	}
+
+	if len(media) == 0 {
+		msg := tgbotapi.NewMessage(chatID, "❌ Недостаточно данных для построения графиков")
+		b.api.Send(msg)
+		return nil
+	}
+
+	// Добавляем описание к первому изображению
+	if mediaPhoto, ok := media[0].(*tgbotapi.InputMediaPhoto); ok {
+		mediaPhoto.Caption = "📊 *Графический анализ*\n\n" +
+			"1. Динамика доходов и расходов\n" +
+			"2. Распределение расходов по категориям\n" +
+			"3. Распределение доходов по категориям\n" +
+			"4. Тренды изменений\n" +
+			"5. Сравнение периодов"
+		mediaPhoto.ParseMode = "Markdown"
+	}
+
+	// Отправляем все графики одним сообщением
+	mediaGroup := tgbotapi.NewMediaGroup(chatID, media)
+	_, err = b.api.SendMediaGroup(mediaGroup)
+	if err != nil {
+		return fmt.Errorf("failed to send charts: %w", err)
+	}
+
+	// Добавляем кнопки навигации
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📊 К отчетам", "action_report"),
+			tgbotapi.NewInlineKeyboardButtonData("« В меню", "action_back"),
+		),
+	)
+
+	msg = tgbotapi.NewMessage(chatID, "Выберите действие:")
+	msg.ReplyMarkup = keyboard
+	b.api.Send(msg)
+
+	return nil
 }
 
 func (b *Bot) sendErrorMessage(chatID int64, text string) {
