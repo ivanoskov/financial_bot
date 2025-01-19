@@ -27,6 +27,7 @@ func (s *ExpenseTracker) AddTransaction(ctx context.Context, userID int64, categ
 		Date:        time.Now(),
 		CreatedAt:   time.Now(),
 	}
+	transaction.GenerateID()
 	return s.repo.CreateTransaction(ctx, transaction)
 }
 

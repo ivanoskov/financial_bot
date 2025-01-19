@@ -85,6 +85,7 @@ func (r *SupabaseRepository) CreateTransaction(ctx context.Context, transaction 
 }
 
 func (r *SupabaseRepository) GetTransactions(ctx context.Context, userID int64, filter TransactionFilter) ([]model.Transaction, error) {
+	fmt.Printf("Getting transactions for user %d with filter %+v\n", userID, filter)
 	var transactions []model.Transaction
 	query := r.client.From("transactions").
 		Select("*", "", false).
@@ -107,11 +108,13 @@ func (r *SupabaseRepository) GetTransactions(ctx context.Context, userID int64, 
 
 	data, count, err := query.Execute()
 	if err != nil {
+		fmt.Printf("Error getting transactions: %v\n", err)
 		return nil, fmt.Errorf("failed to get transactions: %w", err)
 	}
-	fmt.Printf("Got %d transactions\n", count)
+	fmt.Printf("Got %d transactions. Response data: %s\n", count, string(data))
 
 	if err := json.Unmarshal(data, &transactions); err != nil {
+		fmt.Printf("Error parsing transactions: %v\n", err)
 		return nil, fmt.Errorf("failed to parse transactions: %w", err)
 	}
 	return transactions, nil
@@ -136,15 +139,17 @@ func (r *SupabaseRepository) GetTransactionsByCategory(ctx context.Context, user
 }
 
 func (r *SupabaseRepository) DeleteTransaction(ctx context.Context, id string, userID int64) error {
-	_, count, err := r.client.From("transactions").
+	fmt.Printf("Deleting transaction %s for user %d\n", id, userID)
+	data, count, err := r.client.From("transactions").
 		Delete("", "").
 		Eq("id", id).
 		Eq("user_id", strconv.FormatInt(userID, 10)).
 		Execute()
 	if err != nil {
-		return err
+		fmt.Printf("Error deleting transaction: %v\n", err)
+		return fmt.Errorf("failed to delete transaction: %w", err)
 	}
-	_ = count
+	fmt.Printf("Transaction deleted successfully. Response data: %s, count: %d\n", string(data), count)
 	return nil
 }
 
@@ -162,15 +167,17 @@ func (r *SupabaseRepository) UpdateCategory(ctx context.Context, category *model
 }
 
 func (r *SupabaseRepository) DeleteCategory(ctx context.Context, id string, userID int64) error {
-	_, count, err := r.client.From("categories").
+	fmt.Printf("Deleting category %s for user %d\n", id, userID)
+	data, count, err := r.client.From("categories").
 		Delete("", "").
 		Eq("id", id).
 		Eq("user_id", strconv.FormatInt(userID, 10)).
 		Execute()
 	if err != nil {
-		return err
+		fmt.Printf("Error deleting category: %v\n", err)
+		return fmt.Errorf("failed to delete category: %w", err)
 	}
-	_ = count
+	fmt.Printf("Category deleted successfully. Response data: %s, count: %d\n", string(data), count)
 	return nil
 }
 
