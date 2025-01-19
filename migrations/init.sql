@@ -21,6 +21,18 @@ CREATE TABLE transactions (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Создаем таблицу для хранения состояний пользователей
+CREATE TABLE IF NOT EXISTS user_states (
+    user_id BIGINT PRIMARY KEY,
+    selected_category_id TEXT,
+    transaction_type TEXT,
+    awaiting_action TEXT,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Добавляем индекс для быстрого поиска по user_id
+CREATE INDEX IF NOT EXISTS idx_user_states_user_id ON user_states(user_id);
+
 -- Индексы для оптимизации запросов
 CREATE INDEX idx_categories_user_id ON categories(user_id);
 CREATE INDEX idx_transactions_user_id ON transactions(user_id);

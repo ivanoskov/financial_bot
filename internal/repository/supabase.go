@@ -231,4 +231,61 @@ func (r *SupabaseRepository) GetAllUsers(ctx context.Context) ([]int64, error) {
 	return users, nil
 }
 
+// GetUserState возвращает текущее состояние пользователя
+func (r *SupabaseRepository) GetUserState(ctx context.Context, userID int64) (*model.UserState, error) {
+	fmt.Printf("Getting state for user %d\n", userID)
+	data, count, err := r.client.From("user_states").
+		Select("*", "", false).
+		Eq("user_id", strconv.FormatInt(userID, 10)).
+		Execute()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user state: %w", err)
+	}
+	fmt.Printf("Got response data: %s, count: %d\n", string(data), count)
+
+	var states []model.UserState
+	if err := json.Unmarshal(data, &states); err != nil {
+		return nil, fmt.Errorf("failed to parse user state: %w", err)
+	}
+	fmt.Printf("Parsed states: %+v\n", states)
+	if len(states) == 0 {
+		return nil, nil
+	}
+	return &states[0], nil
+}
+
+// SaveUserState сохраняет состояние пользователя
+func (r *SupabaseRepository) SaveUserState(ctx context.Context, state *model.UserState) error {
+	fmt.Printf("Saving user state: %+v\n", state)
+	state.UpdatedAt = time.Now()
+	data, count, err := r.client.From("user_states").
+		Upsert(map[string]interface{}{
+			"user_id":              state.UserID,
+			"selected_category_id": state.SelectedCategory,
+			"transaction_type":     state.TransactionType,
+			"awaiting_action":      state.AwaitingAction,
+			"updated_at":           state.UpdatedAt,
+		}, "", "", "user_id").
+		Execute()
+	if err != nil {
+		return fmt.Errorf("failed to save user state: %w", err)
+	}
+	fmt.Printf("User state saved successfully. Response data: %s, count: %d\n", string(data), count)
+	return nil
+}
+
+// DeleteUserState удаляет состояние пользователя
+func (r *SupabaseRepository) DeleteUserState(ctx context.Context, userID int64) error {
+	fmt.Printf("Deleting user state for user %d\n", userID)
+	data, count, err := r.client.From("user_states").
+		Delete("", "").
+		Eq("user_id", strconv.FormatInt(userID, 10)).
+		Execute()
+	if err != nil {
+		return fmt.Errorf("failed to delete user state: %w", err)
+	}
+	fmt.Printf("User state deleted successfully. Response data: %s, count: %d\n", string(data), count)
+	return nil
+}
+
 // Реализация остальных методов репозитория...

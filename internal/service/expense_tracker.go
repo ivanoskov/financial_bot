@@ -34,6 +34,9 @@ type Repository interface {
 	DeleteTransaction(ctx context.Context, transactionID string, userID int64) error
 	CreateCategory(ctx context.Context, category *model.Category) error
 	DeleteCategory(ctx context.Context, categoryID string, userID int64) error
+	GetUserState(ctx context.Context, userID int64) (*model.UserState, error)
+	SaveUserState(ctx context.Context, state *model.UserState) error
+	DeleteUserState(ctx context.Context, userID int64) error
 }
 
 // NewExpenseTracker создает новый экземпляр ExpenseTracker
@@ -950,4 +953,19 @@ func (s *ExpenseTracker) formatPeriod(reportType ReportType, start, end time.Tim
 			start.Format("02.01.2006"),
 			end.Format("02.01.2006"))
 	}
+}
+
+// GetUserState возвращает текущее состояние пользователя
+func (s *ExpenseTracker) GetUserState(ctx context.Context, userID int64) (*model.UserState, error) {
+	return s.repo.GetUserState(ctx, userID)
+}
+
+// SaveUserState сохраняет состояние пользователя
+func (s *ExpenseTracker) SaveUserState(ctx context.Context, state *model.UserState) error {
+	return s.repo.SaveUserState(ctx, state)
+}
+
+// DeleteUserState удаляет состояние пользователя
+func (s *ExpenseTracker) DeleteUserState(ctx context.Context, userID int64) error {
+	return s.repo.DeleteUserState(ctx, userID)
 }

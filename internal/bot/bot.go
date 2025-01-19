@@ -24,7 +24,6 @@ type UserState struct {
 type Bot struct {
 	api      *tgbotapi.BotAPI
 	service  *service.ExpenseTracker
-	states   map[int64]*UserState // состояния пользователей по их ID
 	chartGen *charts.ChartGenerator
 }
 
@@ -37,9 +36,23 @@ func NewBot(token string, service *service.ExpenseTracker) (*Bot, error) {
 	return &Bot{
 		api:      bot,
 		service:  service,
-		states:   make(map[int64]*UserState),
 		chartGen: charts.NewChartGenerator(),
 	}, nil
+}
+
+// getUserState получает состояние пользователя из БД
+func (b *Bot) getUserState(ctx context.Context, userID int64) (*model.UserState, error) {
+	return b.service.GetUserState(ctx, userID)
+}
+
+// saveUserState сохраняет состояние пользователя в БД
+func (b *Bot) saveUserState(ctx context.Context, state *model.UserState) error {
+	return b.service.SaveUserState(ctx, state)
+}
+
+// deleteUserState удаляет состояние пользователя из БД
+func (b *Bot) deleteUserState(ctx context.Context, userID int64) error {
+	return b.service.DeleteUserState(ctx, userID)
 }
 
 func (b *Bot) handleUpdate(update tgbotapi.Update) error {
@@ -225,10 +238,14 @@ func (b *Bot) handleCallback(callback *tgbotapi.CallbackQuery) error {
 			}
 		}
 
-		// Сохраняем выбранную категорию и тип транзакции в состоянии пользователя
-		b.states[callback.From.ID] = &UserState{
-			SelectedCategoryID: categoryID,
-			TransactionType:    transactionType,
+		// Сохраняем состояние в БД
+		state := &model.UserState{
+			UserID:           callback.From.ID,
+			SelectedCategory: categoryID,
+			TransactionType:  transactionType,
+		}
+		if err := b.saveUserState(context.Background(), state); err != nil {
+			return fmt.Errorf("error saving user state: %w", err)
 		}
 
 		msg = tgbotapi.NewMessage(callback.Message.Chat.ID,
@@ -268,9 +285,15 @@ func (b *Bot) handleCallback(callback *tgbotapi.CallbackQuery) error {
 }
 
 func (b *Bot) handleMessage(message *tgbotapi.Message) error {
-	// Проверяем, есть ли выбранная категория или ожидаемое действие
-	state, exists := b.states[message.From.ID]
-	if !exists {
+	// Проверяем состояние пользователя в БД
+	state, err := b.getUserState(context.Background(), message.From.ID)
+	if err != nil {
+		return fmt.Errorf("error getting user state: %w", err)
+	}
+
+	fmt.Printf("Current user state: %+v\n", state)
+
+	if state == nil {
 		// Если нет активного состояния, показываем главное меню
 		msg := tgbotapi.NewMessage(message.Chat.ID, "Выберите действие:")
 		msg.ReplyMarkup = b.getMainKeyboard()
@@ -280,6 +303,7 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) error {
 
 	// Если ожидаем создание новой категории
 	if state.AwaitingAction == "new_category" {
+		fmt.Printf("Creating new category: %s, type: %s\n", message.Text, state.TransactionType)
 		category := model.Category{
 			UserID: message.From.ID,
 			Name:   message.Text,
@@ -291,8 +315,11 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) error {
 			return nil
 		}
 
-		// Очищаем состояние и показываем обновленный список категорий
-		delete(b.states, message.From.ID)
+		// Очищаем состояние
+		if err := b.deleteUserState(context.Background(), message.From.ID); err != nil {
+			return fmt.Errorf("error deleting user state: %w", err)
+		}
+
 		msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf("Категория '%s' успешно создана! ✅", category.Name))
 		b.api.Send(msg)
 		b.handleCategories(message)
@@ -320,7 +347,7 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) error {
 
 	err = b.service.AddTransaction(context.Background(),
 		message.From.ID,
-		state.SelectedCategoryID,
+		state.SelectedCategory,
 		amount,
 		description)
 
@@ -330,7 +357,9 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) error {
 	}
 
 	// Очищаем состояние после сохранения транзакции
-	delete(b.states, message.From.ID)
+	if err := b.deleteUserState(context.Background(), message.From.ID); err != nil {
+		return fmt.Errorf("error deleting user state: %w", err)
+	}
 
 	// Отправляем сообщение об успехе и показываем главное меню
 	msg := tgbotapi.NewMessage(message.Chat.ID, "Транзакция сохранена! ✅")
@@ -477,20 +506,32 @@ func (b *Bot) handleAddIncome(message *tgbotapi.Message) {
 
 // Добавляем новые методы для управления категориями
 func (b *Bot) handleAddIncomeCategory(message *tgbotapi.Message) {
-	b.states[message.From.ID] = &UserState{
+	state := &model.UserState{
+		UserID:          message.From.ID,
 		TransactionType: "income",
 		AwaitingAction:  "new_category",
 	}
+	if err := b.saveUserState(context.Background(), state); err != nil {
+		b.sendErrorMessage(message.Chat.ID, "Ошибка при сохранении состояния")
+		return
+	}
+
 	msg := tgbotapi.NewMessage(message.Chat.ID, "*Новая категория дохода*\n\nВведите название:")
 	msg.ParseMode = "Markdown"
 	b.api.Send(msg)
 }
 
 func (b *Bot) handleAddExpenseCategory(message *tgbotapi.Message) {
-	b.states[message.From.ID] = &UserState{
+	state := &model.UserState{
+		UserID:          message.From.ID,
 		TransactionType: "expense",
 		AwaitingAction:  "new_category",
 	}
+	if err := b.saveUserState(context.Background(), state); err != nil {
+		b.sendErrorMessage(message.Chat.ID, "Ошибка при сохранении состояния")
+		return
+	}
+
 	msg := tgbotapi.NewMessage(message.Chat.ID, "*Новая категория расхода*\n\nВведите название:")
 	msg.ParseMode = "Markdown"
 	b.api.Send(msg)
