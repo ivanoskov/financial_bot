@@ -2,8 +2,12 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strconv"
 	"github.com/supabase-community/supabase-go"
-	"your-module/internal/model"
+	"github.com/ivanoskov/financial_bot/internal/model"
+	"time"
 )
 
 type SupabaseRepository struct {
@@ -11,7 +15,7 @@ type SupabaseRepository struct {
 }
 
 func NewSupabaseRepository(url, key string) (*SupabaseRepository, error) {
-	client, err := supabase.NewClient(url, key)
+	client, err := supabase.NewClient(url, key, &supabase.ClientOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -22,58 +26,123 @@ func NewSupabaseRepository(url, key string) (*SupabaseRepository, error) {
 }
 
 func (r *SupabaseRepository) CreateCategory(ctx context.Context, category *model.Category) error {
-	_, err := r.client.From("categories").Insert(category).Execute()
-	return err
+	fmt.Printf("Creating category: %+v\n", category)
+	data, count, err := r.client.From("categories").Insert(category, true, "", "", "").Execute()
+	if err != nil {
+		fmt.Printf("Error creating category: %v\n", err)
+		return fmt.Errorf("failed to create category: %w", err)
+	}
+	fmt.Printf("Category created successfully. Response data: %s, count: %d\n", string(data), count)
+	return nil
 }
 
-func (r *SupabaseRepository) GetCategories(ctx context.Context, userID string) ([]model.Category, error) {
+func (r *SupabaseRepository) GetCategories(ctx context.Context, userID int64) ([]model.Category, error) {
 	var categories []model.Category
-	err := r.client.From("categories").
-		Select("*").
-		Eq("user_id", userID).
-		Execute(&categories)
-	return categories, err
+	data, count, err := r.client.From("categories").
+		Select("*", "", false).
+		Eq("user_id", strconv.FormatInt(userID, 10)).
+		Execute()
+	if err != nil {
+		return nil, err
+	}
+	_ = count
+
+	if err := json.Unmarshal(data, &categories); err != nil {
+		return nil, err
+	}
+	return categories, nil
 }
 
 func (r *SupabaseRepository) CreateTransaction(ctx context.Context, transaction *model.Transaction) error {
-	_, err := r.client.From("transactions").Insert(transaction).Execute()
-	return err
+	data, count, err := r.client.From("transactions").Insert(transaction, true, "", "", "").Execute()
+	if err != nil {
+		return err
+	}
+	_ = data
+	_ = count
+	return nil
 }
 
-func (r *SupabaseRepository) GetTransactions(ctx context.Context, userID string, filter TransactionFilter) ([]model.Transaction, error) {
+func (r *SupabaseRepository) GetTransactions(ctx context.Context, userID int64, filter TransactionFilter) ([]model.Transaction, error) {
 	var transactions []model.Transaction
 	query := r.client.From("transactions").
-		Select("*").
-		Eq("user_id", userID)
+		Select("*", "", false).
+		Eq("user_id", strconv.FormatInt(userID, 10))
 
 	if filter.StartDate != nil {
-		query = query.Gte("date", filter.StartDate)
+		query = query.Gte("date", filter.StartDate.Format(time.RFC3339))
 	}
 	if filter.EndDate != nil {
-		query = query.Lte("date", filter.EndDate)
+		query = query.Lte("date", filter.EndDate.Format(time.RFC3339))
 	}
 
-	err := query.Execute(&transactions)
-	return transactions, err
+	data, count, err := query.Execute()
+	if err != nil {
+		return nil, err
+	}
+	_ = count
+
+	if err := json.Unmarshal(data, &transactions); err != nil {
+		return nil, err
+	}
+	return transactions, nil
 }
 
-func (r *SupabaseRepository) GetTransactionsByCategory(ctx context.Context, userID string, categoryID string) ([]model.Transaction, error) {
+func (r *SupabaseRepository) GetTransactionsByCategory(ctx context.Context, userID int64, categoryID string) ([]model.Transaction, error) {
 	var transactions []model.Transaction
-	err := r.client.From("transactions").
-		Select("*").
-		Eq("user_id", userID).
+	data, count, err := r.client.From("transactions").
+		Select("*", "", false).
+		Eq("user_id", strconv.FormatInt(userID, 10)).
 		Eq("category_id", categoryID).
-		Execute(&transactions)
-	return transactions, err
+		Execute()
+	if err != nil {
+		return nil, err
+	}
+	_ = count
+
+	if err := json.Unmarshal(data, &transactions); err != nil {
+		return nil, err
+	}
+	return transactions, nil
 }
 
-func (r *SupabaseRepository) DeleteTransaction(ctx context.Context, id string, userID string) error {
-	_, err := r.client.From("transactions").
-		Delete().
+func (r *SupabaseRepository) DeleteTransaction(ctx context.Context, id string, userID int64) error {
+	_, count, err := r.client.From("transactions").
+		Delete("", "").
 		Eq("id", id).
-		Eq("user_id", userID).
+		Eq("user_id", strconv.FormatInt(userID, 10)).
 		Execute()
-	return err
+	if err != nil {
+		return err
+	}
+	_ = count
+	return nil
+}
+
+func (r *SupabaseRepository) UpdateCategory(ctx context.Context, category *model.Category) error {
+	_, count, err := r.client.From("categories").
+		Update(category, "", "").
+		Eq("id", category.ID).
+		Eq("user_id", strconv.FormatInt(category.UserID, 10)).
+		Execute()
+	if err != nil {
+		return err
+	}
+	_ = count
+	return nil
+}
+
+func (r *SupabaseRepository) DeleteCategory(ctx context.Context, id string, userID int64) error {
+	_, count, err := r.client.From("categories").
+		Delete("", "").
+		Eq("id", id).
+		Eq("user_id", strconv.FormatInt(userID, 10)).
+		Execute()
+	if err != nil {
+		return err
+	}
+	_ = count
+	return nil
 }
 
 // Реализация остальных методов репозитория... 

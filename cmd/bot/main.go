@@ -2,10 +2,10 @@ package main
 
 import (
 	"log"
-	"your-module/internal/bot"
-	"your-module/internal/config"
-	"your-module/internal/service"
-	"your-module/internal/repository"
+	"github.com/ivanoskov/financial_bot/internal/bot"
+	"github.com/ivanoskov/financial_bot/internal/config"
+	"github.com/ivanoskov/financial_bot/internal/service"
+	"github.com/ivanoskov/financial_bot/internal/repository"
 )
 
 func main() {
