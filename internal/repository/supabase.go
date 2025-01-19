@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"github.com/supabase-community/supabase-go"
 	"github.com/ivanoskov/financial_bot/internal/model"
@@ -99,7 +100,7 @@ func (r *SupabaseRepository) GetTransactions(ctx context.Context, userID int64, 
 	}
 
 	// Добавляем сортировку по дате (сначала новые)
-	query = query.Order("date.desc", nil)
+	query = query.Order("created_at", nil)
 
 	// Если указан лимит, добавляем его
 	if filter.Limit > 0 {
@@ -117,6 +118,12 @@ func (r *SupabaseRepository) GetTransactions(ctx context.Context, userID int64, 
 		fmt.Printf("Error parsing transactions: %v\n", err)
 		return nil, fmt.Errorf("failed to parse transactions: %w", err)
 	}
+
+	// Сортируем транзакции по дате в памяти
+	sort.Slice(transactions, func(i, j int) bool {
+		return transactions[i].Date.After(transactions[j].Date)
+	})
+
 	return transactions, nil
 }
 

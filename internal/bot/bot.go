@@ -320,49 +320,69 @@ func (b *Bot) handleReport(message *tgbotapi.Message) {
 		return
 	}
 
-	// Получаем категории для отображения их названий
-	categories, err := b.service.GetCategories(context.Background(), message.From.ID)
-	if err != nil {
-		b.sendErrorMessage(message.Chat.ID, "Не удалось загрузить категории")
-		return
-	}
-
-	// Создаем мапу ID -> Name для категорий
-	categoryNames := make(map[string]string)
-	for _, cat := range categories {
-		categoryNames[cat.ID] = cat.Name
-	}
-
 	text := fmt.Sprintf(
-		"*Отчет за последний месяц* 📊\n\n"+
-			"💰 *Доходы:* %.2f₽\n"+
-			"💸 *Расходы:* %.2f₽\n"+
-			"💵 *Баланс:* %.2f₽\n\n"+
-			"*По категориям:*\n",
-		report.TotalIncome,
-		report.TotalExpenses,
-		report.TotalIncome-report.TotalExpenses,
-	)
-
-	// Сначала выводим доходы, потом расходы
-	if report.TotalIncome > 0 {
-		text += "\n*Доходы:*\n"
-		for categoryID, amount := range report.ByCategory {
-			if amount > 0 {
-				categoryName := categoryNames[categoryID]
-				text += fmt.Sprintf("• %s: %.2f₽\n", categoryName, amount)
-			}
+		"📊 *Отчет за %s*\n\n"+
+			"💰 *Доходы:* %.2f₽ ", report.Period, report.TotalIncome)
+	
+	// Добавляем изменение доходов
+	if report.IncomeChange != 0 {
+		if report.IncomeChange > 0 {
+			text += fmt.Sprintf("(+%.1f%%⬆️)", report.IncomeChange)
+		} else {
+			text += fmt.Sprintf("(%.1f%%⬇️)", report.IncomeChange)
 		}
 	}
 
-	if report.TotalExpenses > 0 {
-		text += "\n*Расходы:*\n"
-		for categoryID, amount := range report.ByCategory {
-			if amount < 0 {
-				categoryName := categoryNames[categoryID]
-				text += fmt.Sprintf("• %s: %.2f₽\n", categoryName, -amount)
-			}
+	text += fmt.Sprintf("\n💸 *Расходы:* %.2f₽ ", report.TotalExpenses)
+	
+	// Добавляем изменение расходов
+	if report.ExpensesChange != 0 {
+		if report.ExpensesChange > 0 {
+			text += fmt.Sprintf("(+%.1f%%⬆️)", report.ExpensesChange)
+		} else {
+			text += fmt.Sprintf("(%.1f%%⬇️)", report.ExpensesChange)
 		}
+	}
+
+	// Баланс
+	text += fmt.Sprintf("\n💵 *Баланс:* %.2f₽\n", report.Balance)
+
+	// Средние значения
+	text += fmt.Sprintf("\n📈 *Средние показатели:*\n"+
+		"• В день: %.2f₽\n"+
+		"• Средняя транзакция: %.2f₽\n"+
+		"• Всего транзакций: %d\n",
+		report.AvgDailyExpense,
+		report.AvgTransAmount,
+		report.TransactionsCount)
+
+	// Топ категорий расходов
+	if len(report.TopExpenseCategories) > 0 {
+		text += "\n💸 *Топ расходов:*\n"
+		for _, cat := range report.TopExpenseCategories {
+			text += fmt.Sprintf("• %s: %.2f₽ (%.1f%%)\n",
+				cat.Name, cat.Amount, cat.Share)
+		}
+	}
+
+	// Топ категорий доходов
+	if len(report.TopIncomeCategories) > 0 {
+		text += "\n💰 *Топ доходов:*\n"
+		for _, cat := range report.TopIncomeCategories {
+			text += fmt.Sprintf("• %s: %.2f₽ (%.1f%%)\n",
+				cat.Name, cat.Amount, cat.Share)
+		}
+	}
+
+	// Добавляем сравнение с прошлым месяцем
+	text += "\n📅 *Сравнение с прошлым месяцем:*\n"
+	if report.PrevMonthIncome > 0 || report.PrevMonthExpenses > 0 {
+		text += fmt.Sprintf("• Доходы: %.2f₽ → %.2f₽\n"+
+			"• Расходы: %.2f₽ → %.2f₽\n",
+			report.PrevMonthIncome, report.TotalIncome,
+			report.PrevMonthExpenses, report.TotalExpenses)
+	} else {
+		text += "Нет данных за прошлый месяц"
 	}
 
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
